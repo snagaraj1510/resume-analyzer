@@ -7,7 +7,7 @@ load_dotenv()
 
 # Provider configs: (provider_name, model_id, display_name)
 PROVIDERS = {
-    "Claude (Anthropic)": {"model": "claude-sonnet-4-6-20250514", "env_key": "ANTHROPIC_API_KEY"},
+    "Claude (Anthropic)": {"model": "claude-sonnet-4-6", "env_key": "ANTHROPIC_API_KEY"},
     "GPT-4o (OpenAI)": {"model": "gpt-4o", "env_key": "OPENAI_API_KEY"},
     "Gemini 2.5 Pro (Google)": {"model": "gemini-2.5-pro-preview-06-05", "env_key": "GOOGLE_API_KEY"},
 }
