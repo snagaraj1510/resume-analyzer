@@ -1,8 +1,10 @@
-"""Document handling: .docx read/write with formatting preservation, PDF parsing."""
+"""Document handling: .docx read/write with formatting preservation, PDF parsing, PDF export."""
 
 import io
+import os
 import re
 import copy
+import tempfile
 from dataclasses import dataclass, field
 from docx import Document
 from docx.shared import Pt, RGBColor
@@ -163,6 +165,74 @@ def parse_pdf(file_bytes: bytes) -> str:
             if text:
                 pages.append(f"--- Page {i + 1} ---\n{text}")
     return "\n\n".join(pages)
+
+
+def parse_pdf_resume(file_bytes: bytes) -> DocumentStructure:
+    """Parse a PDF resume into a DocumentStructure (text-only, no formatting preservation).
+
+    Since PDFs can't be round-tripped with formatting, we create a simple structure
+    where each non-empty line becomes a paragraph. The rewrite output will be a new .docx.
+    """
+    raw_text = ""
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                raw_text += text + "\n"
+
+    structure = DocumentStructure(source_bytes=file_bytes)
+    idx = 0
+    for line in raw_text.split("\n"):
+        if line.strip():
+            info = ParagraphInfo(
+                index=idx,
+                style_name="Normal",
+                runs=[RunInfo(text=line.strip())],
+                full_text=line.strip(),
+            )
+            structure.paragraphs.append(info)
+            idx += 1
+
+    return structure
+
+
+def build_docx_from_text(rewrites: dict[int, str], structure: DocumentStructure) -> bytes:
+    """Build a new .docx from scratch using the rewritten text mapped onto the original structure.
+
+    Used when the source was a PDF (no .docx to modify). Produces a clean .docx
+    with all paragraphs, applying rewrites where available.
+    """
+    doc = Document()
+    for p in structure.paragraphs:
+        text = rewrites.get(p.index, p.full_text)
+        doc.add_paragraph(text)
+
+    output = io.BytesIO()
+    doc.save(output)
+    return output.getvalue()
+
+
+def docx_to_pdf(docx_bytes: bytes) -> bytes | None:
+    """Convert a .docx to PDF using Microsoft Word (Windows only).
+
+    Returns PDF bytes on success, or None if conversion fails.
+    """
+    try:
+        from docx2pdf import convert
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            docx_path = os.path.join(tmp_dir, "resume.docx")
+            pdf_path = os.path.join(tmp_dir, "resume.pdf")
+
+            with open(docx_path, "wb") as f:
+                f.write(docx_bytes)
+
+            convert(docx_path, pdf_path)
+
+            with open(pdf_path, "rb") as f:
+                return f.read()
+    except Exception:
+        return None
 
 
 def chunk_reference_material(text: str, max_chars: int = 80000) -> list[str]:

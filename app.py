@@ -4,7 +4,8 @@ import os
 import streamlit as st
 from document_handler import (
     parse_docx, extract_plain_text, parse_rewrite_response,
-    rebuild_docx, parse_pdf, chunk_reference_material,
+    rebuild_docx, parse_pdf, parse_pdf_resume, build_docx_from_text,
+    chunk_reference_material, docx_to_pdf,
 )
 from profile_manager import UserProfile, save_profile, load_profile, list_profiles
 from analyzer import (
@@ -29,6 +30,7 @@ DEFAULTS = {
     "chat_messages": [],
     "profile": UserProfile(),
     "current_rewrites": {},
+    "resume_is_pdf": False,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -96,13 +98,18 @@ with st.sidebar:
 
     # Resume upload
     st.subheader("Resume")
-    resume_file = st.file_uploader("Upload Resume (.docx)", type=["docx"])
+    resume_file = st.file_uploader("Upload Resume (.docx or .pdf)", type=["docx", "pdf"])
     if resume_file is not None:
         file_bytes = resume_file.read()
         if file_bytes != st.session_state["resume_bytes"]:
             st.session_state["resume_bytes"] = file_bytes
             st.session_state["resume_filename"] = resume_file.name
-            structure = parse_docx(file_bytes)
+            is_pdf = resume_file.name.lower().endswith(".pdf")
+            st.session_state["resume_is_pdf"] = is_pdf
+            if is_pdf:
+                structure = parse_pdf_resume(file_bytes)
+            else:
+                structure = parse_docx(file_bytes)
             st.session_state["resume_structure"] = structure
             st.session_state["resume_text"] = extract_plain_text(structure)
             st.session_state["analysis_result"] = None
@@ -110,6 +117,8 @@ with st.sidebar:
             st.session_state["modified_docx"] = None
             st.session_state["current_rewrites"] = {}
             st.success(f"Loaded: {resume_file.name}")
+            if is_pdf:
+                st.info("PDF uploaded — formatting can't be preserved. Output will be a new .docx/.pdf.")
 
     if st.session_state["resume_text"]:
         with st.expander("Preview Resume Text"):
@@ -263,11 +272,14 @@ with main_col:
                     st.session_state["rewrite_result"] = result
                     rewrites = parse_rewrite_response(result)
                     st.session_state["current_rewrites"] = rewrites
-                    modified = rebuild_docx(
-                        st.session_state["resume_bytes"],
-                        st.session_state["resume_structure"],
-                        rewrites,
-                    )
+                    if st.session_state["resume_is_pdf"]:
+                        modified = build_docx_from_text(rewrites, st.session_state["resume_structure"])
+                    else:
+                        modified = rebuild_docx(
+                            st.session_state["resume_bytes"],
+                            st.session_state["resume_structure"],
+                            rewrites,
+                        )
                     st.session_state["modified_docx"] = modified
 
             if st.session_state["rewrite_result"]:
@@ -290,14 +302,35 @@ with main_col:
                     st.markdown(st.session_state["rewrite_result"])
 
             if st.session_state["modified_docx"]:
-                orig_name = st.session_state["resume_filename"]
-                out_name = orig_name.replace(".docx", "_improved.docx") if orig_name else "resume_improved.docx"
-                st.download_button(
-                    "⬇️ Download Improved Resume",
-                    data=st.session_state["modified_docx"],
-                    file_name=out_name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                )
+                orig_name = st.session_state["resume_filename"] or "resume"
+                base_name = orig_name.rsplit(".", 1)[0]
+
+                dl_col1, dl_col2 = st.columns(2)
+                with dl_col1:
+                    st.download_button(
+                        "⬇️ Download as .docx",
+                        data=st.session_state["modified_docx"],
+                        file_name=f"{base_name}_improved.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="btn_dl_docx",
+                    )
+                with dl_col2:
+                    if st.button("⬇️ Generate PDF", key="btn_gen_pdf"):
+                        with st.spinner("Converting to PDF (requires Microsoft Word)..."):
+                            pdf_bytes = docx_to_pdf(st.session_state["modified_docx"])
+                            if pdf_bytes:
+                                st.session_state["modified_pdf"] = pdf_bytes
+                            else:
+                                st.error("PDF conversion failed. Make sure Microsoft Word is installed.")
+
+                if st.session_state.get("modified_pdf"):
+                    st.download_button(
+                        "⬇️ Download as .pdf",
+                        data=st.session_state["modified_pdf"],
+                        file_name=f"{base_name}_improved.pdf",
+                        mime="application/pdf",
+                        key="btn_dl_pdf",
+                    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -385,11 +418,14 @@ with chat_col:
                 all_rewrites.update(pending)
                 st.session_state["current_rewrites"] = all_rewrites
 
-                modified = rebuild_docx(
-                    st.session_state["resume_bytes"],
-                    st.session_state["resume_structure"],
-                    all_rewrites,
-                )
+                if st.session_state["resume_is_pdf"]:
+                    modified = build_docx_from_text(all_rewrites, st.session_state["resume_structure"])
+                else:
+                    modified = rebuild_docx(
+                        st.session_state["resume_bytes"],
+                        st.session_state["resume_structure"],
+                        all_rewrites,
+                    )
                 st.session_state["modified_docx"] = modified
 
                 new_structure = parse_docx(modified)
@@ -403,12 +439,12 @@ with chat_col:
 
         # Download button always available
         if st.session_state["modified_docx"]:
-            orig_name = st.session_state["resume_filename"]
-            out_name = orig_name.replace(".docx", "_improved.docx") if orig_name else "resume_improved.docx"
+            orig_name = st.session_state["resume_filename"] or "resume"
+            base_name = orig_name.rsplit(".", 1)[0]
             st.download_button(
-                "⬇️ Download Latest Resume",
+                "⬇️ Download Latest Resume (.docx)",
                 data=st.session_state["modified_docx"],
-                file_name=out_name,
+                file_name=f"{base_name}_improved.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="btn_download_chat",
             )
