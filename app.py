@@ -11,6 +11,7 @@ from profile_manager import UserProfile, save_profile, load_profile, list_profil
 from analyzer import (
     analyze_resume, rewrite_resume, rescore_resume,
     build_chat_system, chat_response, full_response, PROVIDERS,
+    detect_ollama, OLLAMA_PROVIDER,
 )
 
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
@@ -68,51 +69,78 @@ with st.sidebar:
 
     # Provider & API Key
     st.subheader("AI Provider")
-    provider = st.selectbox("Select Provider", list(PROVIDERS.keys()), key="provider_select")
 
-    key_hints = {
-        "Claude (Anthropic)": ("sk-ant-...", "console.anthropic.com/settings/keys"),
-        "GPT-4o (OpenAI)": ("sk-...", "platform.openai.com/api-keys"),
-        "Gemini 2.5 Pro (Google)": ("AI...", "aistudio.google.com/apikey"),
-    }
-    placeholder, help_url = key_hints[provider]
+    # Detect Ollama and build provider list
+    ollama_models = detect_ollama()
+    provider_list = list(PROVIDERS.keys())
+    if ollama_models:
+        provider_list.insert(0, OLLAMA_PROVIDER)
 
-    env_var = PROVIDERS[provider]["env_key"]
-    env_key = os.environ.get(env_var, "")
-    if env_key:
-        st.success(f"API key loaded from .env ({env_var})")
+    provider = st.selectbox("Select Provider", provider_list, key="provider_select")
+    ollama_model = None
 
-    st.text_input(
-        f"API Key for {provider}",
-        type="password", key="api_key_input",
-        placeholder=placeholder,
-        help=f"Get your key at {help_url}",
-    )
+    if provider == OLLAMA_PROVIDER:
+        ollama_model = st.selectbox("Ollama Model", ollama_models, key="ollama_model_select")
+        st.success(f"Ollama detected — running locally (no API key needed)")
+        api_key = None
 
-    api_key = get_api_key(provider)
-    if not api_key:
-        st.warning(f"Enter an API key for {provider} to use the analyzer.")
-    else:
-        if st.button("✅ Verify Key", key="btn_verify_key"):
-            with st.spinner("Testing connection..."):
+        if st.button("✅ Verify Connection", key="btn_verify_key"):
+            with st.spinner("Testing Ollama..."):
                 try:
                     result = full_response(
                         "Respond with only the word: Connected",
                         "Test",
                         max_tokens=10,
-                        api_key=api_key,
-                        provider=provider,
-                        lite=True,
+                        provider=OLLAMA_PROVIDER,
+                        ollama_model=ollama_model,
                     )
-                    st.success(f"Key verified — {provider} is connected!")
+                    st.success(f"Connected to Ollama — using {ollama_model}")
                 except Exception as e:
-                    error_msg = str(e)
-                    if "401" in error_msg or "auth" in error_msg.lower():
-                        st.error("Invalid API key. Please check and try again.")
-                    elif "balance" in error_msg.lower() or "quota" in error_msg.lower():
-                        st.error("API key valid but no credits/quota. Add billing to your account.")
-                    else:
-                        st.error(f"Connection failed: {error_msg[:200]}")
+                    st.error(f"Ollama connection failed: {str(e)[:200]}")
+    else:
+        key_hints = {
+            "Claude (Anthropic)": ("sk-ant-...", "console.anthropic.com/settings/keys"),
+            "GPT-4o (OpenAI)": ("sk-...", "platform.openai.com/api-keys"),
+            "Gemini 2.5 Pro (Google)": ("AI...", "aistudio.google.com/apikey"),
+        }
+        placeholder, help_url = key_hints[provider]
+
+        env_var = PROVIDERS[provider]["env_key"]
+        env_key = os.environ.get(env_var, "")
+        if env_key:
+            st.success(f"API key loaded from .env ({env_var})")
+
+        st.text_input(
+            f"API Key for {provider}",
+            type="password", key="api_key_input",
+            placeholder=placeholder,
+            help=f"Get your key at {help_url}",
+        )
+
+        api_key = get_api_key(provider)
+        if not api_key:
+            st.warning(f"Enter an API key for {provider} to use the analyzer.")
+        else:
+            if st.button("✅ Verify Key", key="btn_verify_key"):
+                with st.spinner("Testing connection..."):
+                    try:
+                        result = full_response(
+                            "Respond with only the word: Connected",
+                            "Test",
+                            max_tokens=10,
+                            api_key=api_key,
+                            provider=provider,
+                            lite=True,
+                        )
+                        st.success(f"Key verified — {provider} is connected!")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "401" in error_msg or "auth" in error_msg.lower():
+                            st.error("Invalid API key. Please check and try again.")
+                        elif "balance" in error_msg.lower() or "quota" in error_msg.lower():
+                            st.error("API key valid but no credits/quota. Add billing to your account.")
+                        else:
+                            st.error(f"Connection failed: {error_msg[:200]}")
 
     # Job info
     st.subheader("Job Details")
@@ -279,7 +307,12 @@ with main_col:
         "GPT-4o (OpenAI)": "OpenAI GPT-4o",
         "Gemini 2.5 Pro (Google)": "Google Gemini 2.5 Pro",
     }
-    st.caption(f"Powered by {provider_display.get(provider, provider)} — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
+    if provider == OLLAMA_PROVIDER and ollama_model:
+        display_name = f"Ollama ({ollama_model})"
+    else:
+        display_name = provider_display.get(provider, provider)
+    st.caption(f"Powered by {display_name} — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
+    ready = api_key or provider == OLLAMA_PROVIDER
 
     tab_analysis, tab_rewrite = st.tabs(["📊 Analysis & Score", "✏️ Rewrite & Download"])
 
@@ -291,8 +324,8 @@ with main_col:
             "and **skill diversity** into a single weighted score out of 100."
         )
 
-        if not api_key:
-            st.error("Enter your Anthropic API key in the sidebar to run analysis.")
+        if not ready:
+            st.error("Select a provider and enter an API key in the sidebar to run analysis.")
         elif not st.session_state["resume_text"] or not st.session_state["job_description"]:
             st.warning("Upload a resume and paste a job description in the sidebar to begin.")
         else:
@@ -305,6 +338,7 @@ with main_col:
                     reference_context=st.session_state["reference_text"],
                     api_key=api_key,
                     provider=provider,
+                    ollama_model=ollama_model,
                 )
                 st.write_stream(capture_stream(gen, "analysis_result"))
 
@@ -319,8 +353,8 @@ with main_col:
         analysis_done = st.session_state["analysis_result"] is not None
         st.metric("Analysis", "✅ Done" if analysis_done else "⏳ Pending")
 
-        if not api_key:
-            st.error("Enter your Anthropic API key in the sidebar.")
+        if not ready:
+            st.error("Select a provider and enter an API key in the sidebar.")
         elif not analysis_done:
             st.info("Run the full analysis first before generating a rewrite.")
         else:
@@ -335,6 +369,7 @@ with main_col:
                         reference_context=st.session_state["reference_text"],
                         api_key=api_key,
                         provider=provider,
+                        ollama_model=ollama_model,
                     )
                     st.session_state["rewrite_result"] = result
                     rewrites = parse_rewrite_response(result)
@@ -360,6 +395,7 @@ with main_col:
                         profile_section=profile_section,
                         api_key=api_key,
                         provider=provider,
+                        ollama_model=ollama_model,
                     )
                     st.write_stream(capture_stream(rescore_gen, "rescore_result"))
 
@@ -425,8 +461,8 @@ with main_col:
 with chat_col:
     st.header("💬 Chat")
 
-    if not api_key:
-        st.info("Enter an API key to chat.")
+    if not ready:
+        st.info("Select a provider to chat.")
     elif not st.session_state["resume_text"]:
         st.info("Upload a resume to start chatting.")
     else:
@@ -463,7 +499,7 @@ with chat_col:
             ]
 
             # Stream response
-            gen = chat_response(system, api_messages, api_key=api_key, provider=provider)
+            gen = chat_response(system, api_messages, api_key=api_key, provider=provider, ollama_model=ollama_model)
             with chat_container:
                 with st.chat_message("user"):
                     st.markdown(user_input)

@@ -1,6 +1,8 @@
 """Multi-provider LLM interaction: prompt templates, streaming, and response parsing for resume analysis."""
 
 import os
+import urllib.request
+import json as _json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,6 +21,20 @@ LITE_MODELS = {
     "Gemini 2.5 Pro (Google)": "gemini-2.0-flash",
 }
 
+OLLAMA_BASE_URL = "http://localhost:11434"
+OLLAMA_PROVIDER = "Ollama (Local)"
+
+
+def detect_ollama() -> list[str]:
+    """Check if Ollama is running locally and return list of available model names."""
+    try:
+        req = urllib.request.Request(f"{OLLAMA_BASE_URL}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = _json.loads(resp.read())
+            return [m["name"] for m in data.get("models", [])]
+    except Exception:
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Provider-agnostic streaming and response functions
@@ -33,9 +49,11 @@ def _get_model(provider: str, lite: bool = False) -> str:
 
 def stream_response(system: str, user_message: str, max_tokens: int = 8192,
                     api_key: str | None = None, provider: str = "Claude (Anthropic)",
-                    lite: bool = False):
+                    lite: bool = False, ollama_model: str | None = None):
     """Generator yielding text chunks for Streamlit's write_stream."""
-    if provider == "Claude (Anthropic)":
+    if provider == OLLAMA_PROVIDER:
+        yield from _stream_ollama(system, user_message, max_tokens, ollama_model or "llama3")
+    elif provider == "Claude (Anthropic)":
         yield from _stream_anthropic(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "GPT-4o (OpenAI)":
         yield from _stream_openai(system, user_message, max_tokens, api_key, lite=lite)
@@ -44,9 +62,12 @@ def stream_response(system: str, user_message: str, max_tokens: int = 8192,
 
 
 def chat_response(system: str, messages: list[dict], max_tokens: int = 8192,
-                  api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+                  api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                  ollama_model: str | None = None):
     """Generator yielding text chunks for a multi-turn chat conversation."""
-    if provider == "Claude (Anthropic)":
+    if provider == OLLAMA_PROVIDER:
+        yield from _chat_ollama(system, messages, max_tokens, ollama_model or "llama3")
+    elif provider == "Claude (Anthropic)":
         yield from _chat_anthropic(system, messages, max_tokens, api_key)
     elif provider == "GPT-4o (OpenAI)":
         yield from _chat_openai(system, messages, max_tokens, api_key)
@@ -56,9 +77,11 @@ def chat_response(system: str, messages: list[dict], max_tokens: int = 8192,
 
 def full_response(system: str, user_message: str, max_tokens: int = 8192,
                   api_key: str | None = None, provider: str = "Claude (Anthropic)",
-                  lite: bool = False) -> str:
+                  lite: bool = False, ollama_model: str | None = None) -> str:
     """Non-streaming call that returns the full response text."""
-    if provider == "Claude (Anthropic)":
+    if provider == OLLAMA_PROVIDER:
+        return _full_ollama(system, user_message, max_tokens, ollama_model or "llama3")
+    elif provider == "Claude (Anthropic)":
         return _full_anthropic(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "GPT-4o (OpenAI)":
         return _full_openai(system, user_message, max_tokens, api_key, lite=lite)
@@ -219,6 +242,58 @@ def _full_gemini(system, user_message, max_tokens, api_key, lite=False):
 
 
 # ---------------------------------------------------------------------------
+# Ollama (Local) — uses OpenAI-compatible API
+# ---------------------------------------------------------------------------
+
+def _ollama_client():
+    from openai import OpenAI
+    return OpenAI(base_url=f"{OLLAMA_BASE_URL}/v1", api_key="ollama")
+
+
+def _stream_ollama(system, user_message, max_tokens, model):
+    client = _ollama_client()
+    stream = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _chat_ollama(system, messages, max_tokens, model):
+    client = _ollama_client()
+    api_messages = [{"role": "system", "content": system}] + messages
+    stream = client.chat.completions.create(
+        model=model,
+        messages=api_messages,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _full_ollama(system, user_message, max_tokens, model):
+    client = _ollama_client()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+        max_tokens=max_tokens,
+    )
+    return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------------------
 # GUARDRAILS — injected into all prompts
 # ---------------------------------------------------------------------------
 
@@ -326,7 +401,8 @@ Ranked list of the highest-impact changes, respecting user profile constraints."
 
 def analyze_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "", reference_context: str = "",
-                   api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                   ollama_model: str | None = None):
     """Stream unified ATS + ACR analysis with weighted scoring."""
     system = ANALYSIS_SYSTEM_PROMPT
     if profile_section:
@@ -336,7 +412,7 @@ def analyze_resume(job_title: str, job_description: str, resume_text: str,
     if reference_context:
         user_msg += f"\n\nAdditional Reference Material:\n{reference_context}"
 
-    return stream_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider)
+    return stream_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider, ollama_model=ollama_model)
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +440,8 @@ For each changed paragraph, briefly explain WHY you changed it."""
 def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                    analysis_result: str,
                    profile_section: str = "", reference_context: str = "",
-                   api_key: str | None = None, provider: str = "Claude (Anthropic)") -> str:
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                   ollama_model: str | None = None) -> str:
     """Non-streaming resume rewrite. Returns full response for programmatic parsing."""
     system = REWRITE_SYSTEM_PROMPT
     if profile_section:
@@ -381,7 +458,7 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
 
     user_msg += "\n\nRewrite the paragraphs that need improvement. Output ONLY changed paragraphs in [P:X] format."
 
-    return full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider)
+    return full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider, ollama_model=ollama_model)
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +515,8 @@ Brief bullet list of the 3 highest-impact changes still available."""
 
 def rescore_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "",
-                   api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                   ollama_model: str | None = None):
     """Lightweight re-score using lite model — returns score table only."""
     system = RESCORE_SYSTEM_PROMPT
     if profile_section:
@@ -446,7 +524,7 @@ def rescore_resume(job_title: str, job_description: str, resume_text: str,
 
     user_msg = f"Position: {job_title}\n\nJob Description:\n{job_description}\n\nResume Content:\n{resume_text}"
 
-    return stream_response(system, user_msg, max_tokens=1500, api_key=api_key, provider=provider, lite=True)
+    return stream_response(system, user_msg, max_tokens=1500, api_key=api_key, provider=provider, lite=True, ollama_model=ollama_model)
 
 
 def build_chat_system(job_title: str, job_description: str, resume_text: str,
