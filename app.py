@@ -92,6 +92,27 @@ with st.sidebar:
     api_key = get_api_key(provider)
     if not api_key:
         st.warning(f"Enter an API key for {provider} to use the analyzer.")
+    else:
+        if st.button("✅ Verify Key", key="btn_verify_key"):
+            with st.spinner("Testing connection..."):
+                try:
+                    from analyzer import full_response
+                    result = full_response(
+                        "Respond with only the word: Connected",
+                        "Test",
+                        max_tokens=10,
+                        api_key=api_key,
+                        provider=provider,
+                    )
+                    st.success(f"Key verified — {provider} is connected!")
+                except Exception as e:
+                    error_msg = str(e)
+                    if "401" in error_msg or "auth" in error_msg.lower():
+                        st.error("Invalid API key. Please check and try again.")
+                    elif "balance" in error_msg.lower() or "quota" in error_msg.lower():
+                        st.error("API key valid but no credits/quota. Add billing to your account.")
+                    else:
+                        st.error(f"Connection failed: {error_msg[:200]}")
 
     # Job info
     st.subheader("Job Details")
