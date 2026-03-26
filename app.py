@@ -154,24 +154,15 @@ with st.sidebar:
     # Reference materials
     st.subheader("Reference Materials")
 
-    # Load bundled references (shipped with the app)
+    # Silently load bundled references on the backend
     REFERENCES_DIR = os.path.join(os.path.dirname(__file__), "references")
     if "bundled_ref_text" not in st.session_state:
         bundled = load_bundled_references(REFERENCES_DIR)
         st.session_state["bundled_ref_text"] = bundled
 
-    bundled_files = []
-    if os.path.isdir(REFERENCES_DIR):
-        bundled_files = [f for f in os.listdir(REFERENCES_DIR)
-                         if f.lower().endswith((".pdf", ".docx"))]
-    if bundled_files:
-        with st.expander(f"📚 Bundled references ({len(bundled_files)} files)"):
-            for f in bundled_files:
-                st.text(f"  • {f}")
-
-    # User can also upload additional files
+    # User can upload additional files
     ref_files = st.file_uploader(
-        "Upload additional books/PDFs (optional)",
+        "Upload books/PDFs for best practices (optional)",
         type=["pdf", "docx"],
         accept_multiple_files=True,
     )
