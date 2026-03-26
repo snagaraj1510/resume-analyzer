@@ -274,7 +274,12 @@ profile_section = prof.to_prompt_section() if (
 # ═══════════════════════════════════════════════════════════════════════════
 with main_col:
     st.title("Resume Analyzer")
-    st.caption(f"Powered by {provider} — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
+    provider_display = {
+        "Claude (Anthropic)": "Claude Sonnet 4.6",
+        "GPT-4o (OpenAI)": "OpenAI GPT-4o",
+        "Gemini 2.5 Pro (Google)": "Google Gemini 2.5 Pro",
+    }
+    st.caption(f"Powered by {provider_display.get(provider, provider)} — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
 
     tab_analysis, tab_rewrite = st.tabs(["📊 Analysis & Score", "✏️ Rewrite & Download"])
 
