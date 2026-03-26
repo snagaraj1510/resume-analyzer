@@ -10,7 +10,7 @@ from document_handler import (
 from profile_manager import UserProfile, save_profile, load_profile, list_profiles
 from analyzer import (
     analyze_resume, rewrite_resume,
-    build_chat_system, chat_response,
+    build_chat_system, chat_response, PROVIDERS,
 )
 
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
@@ -47,12 +47,13 @@ def capture_stream(generator, state_key: str):
     st.session_state[state_key] = "".join(chunks)
 
 
-def get_api_key() -> str | None:
-    """Return the API key from sidebar input or .env, or None if missing."""
+def get_api_key(provider: str) -> str | None:
+    """Return the API key from sidebar input or env var for the selected provider."""
     ui_key = st.session_state.get("api_key_input", "")
     if ui_key:
         return ui_key
-    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    env_var = PROVIDERS[provider]["env_key"]
+    env_key = os.environ.get(env_var, "")
     return env_key if env_key else None
 
 
@@ -65,27 +66,32 @@ main_col, chat_col = st.columns([3, 2])
 with st.sidebar:
     st.header("📄 Resume Analyzer")
 
-    # API Key
-    st.subheader("API Key")
-    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if env_key:
-        st.success("API key loaded from .env")
-        st.text_input(
-            "Or enter your own Anthropic API key",
-            type="password", key="api_key_input",
-            placeholder="sk-ant-...",
-        )
-    else:
-        st.text_input(
-            "Anthropic API Key",
-            type="password", key="api_key_input",
-            placeholder="sk-ant-...",
-            help="Get your key at console.anthropic.com/settings/keys",
-        )
+    # Provider & API Key
+    st.subheader("AI Provider")
+    provider = st.selectbox("Select Provider", list(PROVIDERS.keys()), key="provider_select")
 
-    api_key = get_api_key()
+    key_hints = {
+        "Claude (Anthropic)": ("sk-ant-...", "console.anthropic.com/settings/keys"),
+        "GPT-4o (OpenAI)": ("sk-...", "platform.openai.com/api-keys"),
+        "Gemini 2.5 Pro (Google)": ("AI...", "aistudio.google.com/apikey"),
+    }
+    placeholder, help_url = key_hints[provider]
+
+    env_var = PROVIDERS[provider]["env_key"]
+    env_key = os.environ.get(env_var, "")
+    if env_key:
+        st.success(f"API key loaded from .env ({env_var})")
+
+    st.text_input(
+        f"API Key for {provider}",
+        type="password", key="api_key_input",
+        placeholder=placeholder,
+        help=f"Get your key at {help_url}",
+    )
+
+    api_key = get_api_key(provider)
     if not api_key:
-        st.warning("Enter an API key to use the analyzer.")
+        st.warning(f"Enter an API key for {provider} to use the analyzer.")
 
     # Job info
     st.subheader("Job Details")
@@ -237,7 +243,7 @@ profile_section = prof.to_prompt_section() if (
 # ═══════════════════════════════════════════════════════════════════════════
 with main_col:
     st.title("Resume Analyzer")
-    st.caption("Powered by Claude Sonnet 4.6 — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
+    st.caption(f"Powered by {provider} — Unified Scoring · ACR Factory · AI Rewrite · Live Chat")
 
     tab_analysis, tab_rewrite = st.tabs(["📊 Analysis & Score", "✏️ Rewrite & Download"])
 
@@ -262,6 +268,7 @@ with main_col:
                     profile_section=profile_section,
                     reference_context=st.session_state["reference_text"],
                     api_key=api_key,
+                    provider=provider,
                 )
                 st.write_stream(capture_stream(gen, "analysis_result"))
 
@@ -291,6 +298,7 @@ with main_col:
                         profile_section=profile_section,
                         reference_context=st.session_state["reference_text"],
                         api_key=api_key,
+                        provider=provider,
                     )
                     st.session_state["rewrite_result"] = result
                     rewrites = parse_rewrite_response(result)
@@ -400,7 +408,7 @@ with chat_col:
             ]
 
             # Stream response
-            gen = chat_response(system, api_messages, api_key=api_key)
+            gen = chat_response(system, api_messages, api_key=api_key, provider=provider)
             with chat_container:
                 with st.chat_message("user"):
                     st.markdown(user_input)

@@ -1,26 +1,65 @@
-"""Claude API interaction: prompt templates, streaming, and response parsing for resume analysis."""
+"""Multi-provider LLM interaction: prompt templates, streaming, and response parsing for resume analysis."""
 
 import os
-import anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
 
-MODEL = "claude-sonnet-4-6-20250514"
+# Provider configs: (provider_name, model_id, display_name)
+PROVIDERS = {
+    "Claude (Anthropic)": {"model": "claude-sonnet-4-6-20250514", "env_key": "ANTHROPIC_API_KEY"},
+    "GPT-4o (OpenAI)": {"model": "gpt-4o", "env_key": "OPENAI_API_KEY"},
+    "Gemini 2.5 Pro (Google)": {"model": "gemini-2.5-pro-preview-06-05", "env_key": "GOOGLE_API_KEY"},
+}
 
 
-def get_client(api_key: str | None = None) -> anthropic.Anthropic:
-    """Create an Anthropic client using the provided key, or fall back to .env / env var."""
-    if api_key:
-        return anthropic.Anthropic(api_key=api_key)
-    return anthropic.Anthropic()
+# ---------------------------------------------------------------------------
+# Provider-agnostic streaming and response functions
+# ---------------------------------------------------------------------------
 
-
-def stream_response(system: str, user_message: str, max_tokens: int = 8192, api_key: str | None = None):
+def stream_response(system: str, user_message: str, max_tokens: int = 8192,
+                    api_key: str | None = None, provider: str = "Claude (Anthropic)"):
     """Generator yielding text chunks for Streamlit's write_stream."""
-    client = get_client(api_key)
+    if provider == "Claude (Anthropic)":
+        yield from _stream_anthropic(system, user_message, max_tokens, api_key)
+    elif provider == "GPT-4o (OpenAI)":
+        yield from _stream_openai(system, user_message, max_tokens, api_key)
+    elif provider == "Gemini 2.5 Pro (Google)":
+        yield from _stream_gemini(system, user_message, max_tokens, api_key)
+
+
+def chat_response(system: str, messages: list[dict], max_tokens: int = 8192,
+                  api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+    """Generator yielding text chunks for a multi-turn chat conversation."""
+    if provider == "Claude (Anthropic)":
+        yield from _chat_anthropic(system, messages, max_tokens, api_key)
+    elif provider == "GPT-4o (OpenAI)":
+        yield from _chat_openai(system, messages, max_tokens, api_key)
+    elif provider == "Gemini 2.5 Pro (Google)":
+        yield from _chat_gemini(system, messages, max_tokens, api_key)
+
+
+def full_response(system: str, user_message: str, max_tokens: int = 8192,
+                  api_key: str | None = None, provider: str = "Claude (Anthropic)") -> str:
+    """Non-streaming call that returns the full response text."""
+    if provider == "Claude (Anthropic)":
+        return _full_anthropic(system, user_message, max_tokens, api_key)
+    elif provider == "GPT-4o (OpenAI)":
+        return _full_openai(system, user_message, max_tokens, api_key)
+    elif provider == "Gemini 2.5 Pro (Google)":
+        return _full_gemini(system, user_message, max_tokens, api_key)
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Anthropic (Claude)
+# ---------------------------------------------------------------------------
+
+def _stream_anthropic(system, user_message, max_tokens, api_key):
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     with client.messages.stream(
-        model=MODEL,
+        model=PROVIDERS["Claude (Anthropic)"]["model"],
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user_message}],
@@ -29,11 +68,11 @@ def stream_response(system: str, user_message: str, max_tokens: int = 8192, api_
             yield text
 
 
-def chat_response(system: str, messages: list[dict], max_tokens: int = 8192, api_key: str | None = None):
-    """Generator yielding text chunks for a multi-turn chat conversation."""
-    client = get_client(api_key)
+def _chat_anthropic(system, messages, max_tokens, api_key):
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     with client.messages.stream(
-        model=MODEL,
+        model=PROVIDERS["Claude (Anthropic)"]["model"],
         max_tokens=max_tokens,
         system=system,
         messages=messages,
@@ -42,16 +81,125 @@ def chat_response(system: str, messages: list[dict], max_tokens: int = 8192, api
             yield text
 
 
-def full_response(system: str, user_message: str, max_tokens: int = 8192, api_key: str | None = None) -> str:
-    """Non-streaming call that returns the full response text."""
-    client = get_client(api_key)
+def _full_anthropic(system, user_message, max_tokens, api_key):
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     response = client.messages.create(
-        model=MODEL,
+        model=PROVIDERS["Claude (Anthropic)"]["model"],
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user_message}],
     )
     return response.content[0].text
+
+
+# ---------------------------------------------------------------------------
+# OpenAI (GPT-4o)
+# ---------------------------------------------------------------------------
+
+def _stream_openai(system, user_message, max_tokens, api_key):
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key) if api_key else OpenAI()
+    stream = client.chat.completions.create(
+        model=PROVIDERS["GPT-4o (OpenAI)"]["model"],
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _chat_openai(system, messages, max_tokens, api_key):
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key) if api_key else OpenAI()
+    api_messages = [{"role": "system", "content": system}] + messages
+    stream = client.chat.completions.create(
+        model=PROVIDERS["GPT-4o (OpenAI)"]["model"],
+        max_tokens=max_tokens,
+        messages=api_messages,
+        stream=True,
+    )
+    for chunk in stream:
+        if chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+def _full_openai(system, user_message, max_tokens, api_key):
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key) if api_key else OpenAI()
+    response = client.chat.completions.create(
+        model=PROVIDERS["GPT-4o (OpenAI)"]["model"],
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------------------
+# Google Gemini
+# ---------------------------------------------------------------------------
+
+def _stream_gemini(system, user_message, max_tokens, api_key):
+    import google.generativeai as genai
+    genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
+    model = genai.GenerativeModel(
+        model_name=PROVIDERS["Gemini 2.5 Pro (Google)"]["model"],
+        system_instruction=system,
+    )
+    response = model.generate_content(
+        user_message,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens),
+        stream=True,
+    )
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
+
+
+def _chat_gemini(system, messages, max_tokens, api_key):
+    import google.generativeai as genai
+    genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
+    model = genai.GenerativeModel(
+        model_name=PROVIDERS["Gemini 2.5 Pro (Google)"]["model"],
+        system_instruction=system,
+    )
+    # Convert messages to Gemini format
+    history = []
+    for msg in messages[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        history.append({"role": role, "parts": [msg["content"]]})
+    chat = model.start_chat(history=history)
+    last_msg = messages[-1]["content"] if messages else ""
+    response = chat.send_message(
+        last_msg,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens),
+        stream=True,
+    )
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
+
+
+def _full_gemini(system, user_message, max_tokens, api_key):
+    import google.generativeai as genai
+    genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
+    model = genai.GenerativeModel(
+        model_name=PROVIDERS["Gemini 2.5 Pro (Google)"]["model"],
+        system_instruction=system,
+    )
+    response = model.generate_content(
+        user_message,
+        generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens),
+    )
+    return response.text
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +310,7 @@ Ranked list of the highest-impact changes, respecting user profile constraints."
 
 def analyze_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "", reference_context: str = "",
-                   api_key: str | None = None):
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)"):
     """Stream unified ATS + ACR analysis with weighted scoring."""
     system = ANALYSIS_SYSTEM_PROMPT
     if profile_section:
@@ -172,7 +320,7 @@ def analyze_resume(job_title: str, job_description: str, resume_text: str,
     if reference_context:
         user_msg += f"\n\nAdditional Reference Material:\n{reference_context}"
 
-    return stream_response(system, user_msg, max_tokens=12000, api_key=api_key)
+    return stream_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +348,7 @@ For each changed paragraph, briefly explain WHY you changed it."""
 def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                    analysis_result: str,
                    profile_section: str = "", reference_context: str = "",
-                   api_key: str | None = None) -> str:
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)") -> str:
     """Non-streaming resume rewrite. Returns full response for programmatic parsing."""
     system = REWRITE_SYSTEM_PROMPT
     if profile_section:
@@ -217,7 +365,7 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
 
     user_msg += "\n\nRewrite the paragraphs that need improvement. Output ONLY changed paragraphs in [P:X] format."
 
-    return full_response(system, user_msg, max_tokens=12000, api_key=api_key)
+    return full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider)
 
 
 # ---------------------------------------------------------------------------
