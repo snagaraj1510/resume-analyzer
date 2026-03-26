@@ -349,6 +349,26 @@ with main_col:
                         )
                     st.session_state["modified_docx"] = modified
 
+                    # Re-score the improved resume
+                    improved_structure = parse_docx(modified)
+                    improved_text = extract_plain_text(improved_structure)
+                    st.subheader("New Fit Score")
+                    rescore_gen = analyze_resume(
+                        st.session_state["job_title"],
+                        st.session_state["job_description"],
+                        improved_text,
+                        profile_section=profile_section,
+                        reference_context=st.session_state["reference_text"],
+                        api_key=api_key,
+                        provider=provider,
+                    )
+                    st.write_stream(capture_stream(rescore_gen, "rescore_result"))
+
+            if st.session_state.get("rescore_result"):
+                st.markdown("---")
+                st.subheader("Improved Resume Score")
+                st.markdown(st.session_state["rescore_result"])
+
             if st.session_state["rewrite_result"]:
                 st.subheader("Changes Made")
                 rewrites = st.session_state["current_rewrites"]
