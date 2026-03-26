@@ -255,24 +255,41 @@ with st.sidebar:
     with st.expander("Edit Profile", expanded=(profile_action == "New / Edit")):
         prof.name = st.text_input("Profile Name", value=prof.name)
 
-        st.markdown("**Skills / Experience I Have**")
+        st.markdown("**Experience Facts** (ground truth — what you actually did)")
+        experience_text = st.text_area(
+            "One fact per line (roles, projects, metrics, stakeholders)",
+            value="\n".join(prof.experience_facts),
+            key="experience_facts_input", height=120,
+        )
+        prof.experience_facts = [s.strip() for s in experience_text.split("\n") if s.strip()]
+
+        st.markdown("**Known Tools & Skills**")
         skills_have_text = st.text_area(
-            "One per line", value="\n".join(prof.skills_have),
+            "One per line — only these may appear on your resume",
+            value="\n".join(prof.skills_have),
             key="skills_have_input", height=100,
         )
         prof.skills_have = [s.strip() for s in skills_have_text.split("\n") if s.strip()]
 
-        st.markdown("**Skills / Experience I Do NOT Have**")
+        st.markdown("**Tools NOT Used — Blocklist**")
         skills_missing_text = st.text_area(
-            "One per line (Claude will never add these)",
+            "One per line — will NEVER be added to your resume",
             value="\n".join(prof.skills_missing),
             key="skills_missing_input", height=100,
         )
         prof.skills_missing = [s.strip() for s in skills_missing_text.split("\n") if s.strip()]
 
+        st.markdown("**Title Adjustment Rules**")
+        title_rules_text = st.text_area(
+            "E.g., 'Financial Analyst -> Financial Analyst, Product Strategy is VALID'",
+            value="\n".join(prof.title_rules),
+            key="title_rules_input", height=80,
+        )
+        prof.title_rules = [s.strip() for s in title_rules_text.split("\n") if s.strip()]
+
         st.markdown("**Constraints / Facts**")
         constraints_text = st.text_area(
-            "E.g., '3 years experience not 5'",
+            "E.g., 'No direct reports', '3 years experience not 5'",
             value="\n".join(prof.constraints),
             key="constraints_input", height=80,
         )
@@ -280,7 +297,7 @@ with st.sidebar:
 
         st.markdown("**Style Preferences**")
         preferences_text = st.text_area(
-            "E.g., 'Technical tone', 'Keep to 1 page'",
+            "E.g., 'ACR format', '1 page only', 'Target <185 chars'",
             value="\n".join(prof.preferences),
             key="preferences_input", height=80,
         )
@@ -293,7 +310,8 @@ with st.sidebar:
 
 # ── Profile prompt section ──────────────────────────────────────────────────
 profile_section = prof.to_prompt_section() if (
-    prof.skills_have or prof.skills_missing or prof.constraints or prof.preferences
+    prof.experience_facts or prof.skills_have or prof.skills_missing
+    or prof.title_rules or prof.constraints or prof.preferences
 ) else ""
 
 

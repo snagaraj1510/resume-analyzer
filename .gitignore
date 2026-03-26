@@ -5,3 +5,4 @@ venv/
 .venv/
 .streamlit/
 user_profiles/*.json
+!user_profiles/shreyas_nagaraj.json
