@@ -213,12 +213,13 @@ def build_docx_from_text(rewrites: dict[int, str], structure: DocumentStructure)
 
 
 def docx_to_pdf(docx_bytes: bytes) -> bytes | None:
-    """Convert a .docx to PDF using Microsoft Word (Windows only).
+    """Convert a .docx to PDF. Tries docx2pdf (Word) first, falls back to mammoth+xhtml2pdf.
 
     Returns PDF bytes on success, or None if conversion fails.
     """
+    # Try docx2pdf (requires Microsoft Word — works locally on Windows/Mac)
     try:
-        from docx2pdf import convert
+        from docx2pdf import convert as docx2pdf_convert
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             docx_path = os.path.join(tmp_dir, "resume.docx")
@@ -227,12 +228,75 @@ def docx_to_pdf(docx_bytes: bytes) -> bytes | None:
             with open(docx_path, "wb") as f:
                 f.write(docx_bytes)
 
-            convert(docx_path, pdf_path)
+            docx2pdf_convert(docx_path, pdf_path)
 
             with open(pdf_path, "rb") as f:
                 return f.read()
     except Exception:
-        return None
+        pass
+
+    # Fallback: mammoth (docx→HTML) + xhtml2pdf (HTML→PDF) — works everywhere
+    try:
+        import mammoth
+        from xhtml2pdf import pisa
+
+        html_result = mammoth.convert_to_html(io.BytesIO(docx_bytes))
+        html_content = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body {{ font-family: Calibri, Arial, sans-serif; font-size: 11pt; margin: 40px 50px; line-height: 1.4; }}
+p {{ margin: 2px 0; }}
+ul, ol {{ margin: 4px 0; padding-left: 20px; }}
+li {{ margin: 2px 0; }}
+h1 {{ font-size: 16pt; margin: 8px 0 4px 0; }}
+h2 {{ font-size: 13pt; margin: 6px 0 3px 0; }}
+h3 {{ font-size: 11pt; margin: 4px 0 2px 0; }}
+table {{ width: 100%; border-collapse: collapse; }}
+td, th {{ padding: 4px; vertical-align: top; }}
+</style></head><body>{html_result.value}</body></html>"""
+
+        pdf_output = io.BytesIO()
+        pisa_status = pisa.CreatePDF(io.StringIO(html_content), dest=pdf_output)
+        if not pisa_status.err:
+            return pdf_output.getvalue()
+    except Exception:
+        pass
+
+    return None
+
+
+def load_bundled_references(references_dir: str) -> str:
+    """Load all pre-packaged reference files from a directory.
+
+    Reads .pdf and .docx files from the given directory and returns
+    their combined text content.
+    """
+    if not os.path.isdir(references_dir):
+        return ""
+
+    ref_texts = []
+    for filename in sorted(os.listdir(references_dir)):
+        filepath = os.path.join(references_dir, filename)
+        if not os.path.isfile(filepath):
+            continue
+
+        try:
+            with open(filepath, "rb") as f:
+                file_bytes = f.read()
+
+            if filename.lower().endswith(".pdf"):
+                text = parse_pdf(file_bytes)
+                if text:
+                    ref_texts.append(f"## {filename}\n{text}")
+            elif filename.lower().endswith(".docx"):
+                structure = parse_docx(file_bytes)
+                text = extract_plain_text(structure)
+                if text:
+                    ref_texts.append(f"## {filename}\n{text}")
+        except Exception:
+            continue
+
+    return "\n\n".join(ref_texts)
 
 
 def chunk_reference_material(text: str, max_chars: int = 80000) -> list[str]:

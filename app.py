@@ -5,7 +5,7 @@ import streamlit as st
 from document_handler import (
     parse_docx, extract_plain_text, parse_rewrite_response,
     rebuild_docx, parse_pdf, parse_pdf_resume, build_docx_from_text,
-    chunk_reference_material, docx_to_pdf,
+    chunk_reference_material, docx_to_pdf, load_bundled_references,
 )
 from profile_manager import UserProfile, save_profile, load_profile, list_profiles
 from analyzer import (
@@ -126,11 +126,29 @@ with st.sidebar:
 
     # Reference materials
     st.subheader("Reference Materials")
+
+    # Load bundled references (shipped with the app)
+    REFERENCES_DIR = os.path.join(os.path.dirname(__file__), "references")
+    if "bundled_ref_text" not in st.session_state:
+        bundled = load_bundled_references(REFERENCES_DIR)
+        st.session_state["bundled_ref_text"] = bundled
+
+    bundled_files = []
+    if os.path.isdir(REFERENCES_DIR):
+        bundled_files = [f for f in os.listdir(REFERENCES_DIR)
+                         if f.lower().endswith((".pdf", ".docx"))]
+    if bundled_files:
+        with st.expander(f"📚 Bundled references ({len(bundled_files)} files)"):
+            for f in bundled_files:
+                st.text(f"  • {f}")
+
+    # User can also upload additional files
     ref_files = st.file_uploader(
-        "Upload books/PDFs for best practices",
+        "Upload additional books/PDFs (optional)",
         type=["pdf", "docx"],
         accept_multiple_files=True,
     )
+    uploaded_ref = ""
     if ref_files:
         ref_texts = []
         for rf in ref_files:
@@ -140,10 +158,15 @@ with st.sidebar:
             elif rf.name.endswith(".docx"):
                 ref_struct = parse_docx(rf_bytes)
                 ref_texts.append(f"## {rf.name}\n{extract_plain_text(ref_struct)}")
-        full_ref = "\n\n".join(ref_texts)
-        chunks = chunk_reference_material(full_ref)
-        st.session_state["reference_text"] = chunks[0] if chunks else ""
-        st.success(f"Loaded {len(ref_files)} reference file(s)")
+        uploaded_ref = "\n\n".join(ref_texts)
+        st.success(f"Loaded {len(ref_files)} additional file(s)")
+
+    # Combine bundled + uploaded references
+    combined_ref = st.session_state.get("bundled_ref_text", "")
+    if uploaded_ref:
+        combined_ref = combined_ref + "\n\n" + uploaded_ref if combined_ref else uploaded_ref
+    chunks = chunk_reference_material(combined_ref) if combined_ref else []
+    st.session_state["reference_text"] = chunks[0] if chunks else ""
 
     # ── Profile Manager ─────────────────────────────────────────────────────
     st.subheader("User Profile")
