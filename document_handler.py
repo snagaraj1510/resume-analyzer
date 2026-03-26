@@ -235,30 +235,35 @@ def docx_to_pdf(docx_bytes: bytes) -> bytes | None:
     except Exception:
         pass
 
-    # Fallback: mammoth (docx→HTML) + xhtml2pdf (HTML→PDF) — works everywhere
+    # Fallback: mammoth (docx→HTML) + fpdf2 (text→PDF) — pure Python, works everywhere
     try:
         import mammoth
-        from xhtml2pdf import pisa
+        from fpdf import FPDF
+        import html as html_module
 
         html_result = mammoth.convert_to_html(io.BytesIO(docx_bytes))
-        html_content = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<style>
-body {{ font-family: Calibri, Arial, sans-serif; font-size: 11pt; margin: 40px 50px; line-height: 1.4; }}
-p {{ margin: 2px 0; }}
-ul, ol {{ margin: 4px 0; padding-left: 20px; }}
-li {{ margin: 2px 0; }}
-h1 {{ font-size: 16pt; margin: 8px 0 4px 0; }}
-h2 {{ font-size: 13pt; margin: 6px 0 3px 0; }}
-h3 {{ font-size: 11pt; margin: 4px 0 2px 0; }}
-table {{ width: 100%; border-collapse: collapse; }}
-td, th {{ padding: 4px; vertical-align: top; }}
-</style></head><body>{html_result.value}</body></html>"""
+        # Strip HTML tags to get plain text, preserving line breaks
+        import re
+        text = html_result.value
+        text = re.sub(r'<br\s*/?>', '\n', text)
+        text = re.sub(r'</p>', '\n', text)
+        text = re.sub(r'</li>', '\n', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = html_module.unescape(text)
 
-        pdf_output = io.BytesIO()
-        pisa_status = pisa.CreatePDF(io.StringIO(html_content), dest=pdf_output)
-        if not pisa_status.err:
-            return pdf_output.getvalue()
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=11)
+
+        for line in text.split('\n'):
+            line = line.strip()
+            if line:
+                pdf.multi_cell(0, 6, line)
+            else:
+                pdf.ln(3)
+
+        return pdf.output()
     except Exception:
         pass
 
