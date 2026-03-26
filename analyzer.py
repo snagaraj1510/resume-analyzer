@@ -5,11 +5,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Provider configs: (provider_name, model_id, display_name)
+# Provider configs
 PROVIDERS = {
     "Claude (Anthropic)": {"model": "claude-sonnet-4-6", "env_key": "ANTHROPIC_API_KEY"},
     "GPT-4o (OpenAI)": {"model": "gpt-4o", "env_key": "OPENAI_API_KEY"},
     "Gemini 2.5 Pro (Google)": {"model": "gemini-2.5-pro-preview-06-05", "env_key": "GOOGLE_API_KEY"},
+}
+
+# Cheap models for lightweight tasks (verify key, re-scoring)
+LITE_MODELS = {
+    "Claude (Anthropic)": "claude-haiku-4-5-20251001",
+    "GPT-4o (OpenAI)": "gpt-4o-mini",
+    "Gemini 2.5 Pro (Google)": "gemini-2.0-flash",
 }
 
 
@@ -17,15 +24,23 @@ PROVIDERS = {
 # Provider-agnostic streaming and response functions
 # ---------------------------------------------------------------------------
 
+def _get_model(provider: str, lite: bool = False) -> str:
+    """Return the model ID for the given provider. Use lite=True for cheap tasks."""
+    if lite:
+        return LITE_MODELS.get(provider, PROVIDERS[provider]["model"])
+    return PROVIDERS[provider]["model"]
+
+
 def stream_response(system: str, user_message: str, max_tokens: int = 8192,
-                    api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                    lite: bool = False):
     """Generator yielding text chunks for Streamlit's write_stream."""
     if provider == "Claude (Anthropic)":
-        yield from _stream_anthropic(system, user_message, max_tokens, api_key)
+        yield from _stream_anthropic(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "GPT-4o (OpenAI)":
-        yield from _stream_openai(system, user_message, max_tokens, api_key)
+        yield from _stream_openai(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "Gemini 2.5 Pro (Google)":
-        yield from _stream_gemini(system, user_message, max_tokens, api_key)
+        yield from _stream_gemini(system, user_message, max_tokens, api_key, lite=lite)
 
 
 def chat_response(system: str, messages: list[dict], max_tokens: int = 8192,
@@ -40,14 +55,15 @@ def chat_response(system: str, messages: list[dict], max_tokens: int = 8192,
 
 
 def full_response(system: str, user_message: str, max_tokens: int = 8192,
-                  api_key: str | None = None, provider: str = "Claude (Anthropic)") -> str:
+                  api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                  lite: bool = False) -> str:
     """Non-streaming call that returns the full response text."""
     if provider == "Claude (Anthropic)":
-        return _full_anthropic(system, user_message, max_tokens, api_key)
+        return _full_anthropic(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "GPT-4o (OpenAI)":
-        return _full_openai(system, user_message, max_tokens, api_key)
+        return _full_openai(system, user_message, max_tokens, api_key, lite=lite)
     elif provider == "Gemini 2.5 Pro (Google)":
-        return _full_gemini(system, user_message, max_tokens, api_key)
+        return _full_gemini(system, user_message, max_tokens, api_key, lite=lite)
     return ""
 
 
@@ -55,11 +71,11 @@ def full_response(system: str, user_message: str, max_tokens: int = 8192,
 # Anthropic (Claude)
 # ---------------------------------------------------------------------------
 
-def _stream_anthropic(system, user_message, max_tokens, api_key):
+def _stream_anthropic(system, user_message, max_tokens, api_key, lite=False):
     import anthropic
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     with client.messages.stream(
-        model=PROVIDERS["Claude (Anthropic)"]["model"],
+        model=_get_model("Claude (Anthropic)", lite),
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user_message}],
@@ -81,11 +97,11 @@ def _chat_anthropic(system, messages, max_tokens, api_key):
             yield text
 
 
-def _full_anthropic(system, user_message, max_tokens, api_key):
+def _full_anthropic(system, user_message, max_tokens, api_key, lite=False):
     import anthropic
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
     response = client.messages.create(
-        model=PROVIDERS["Claude (Anthropic)"]["model"],
+        model=_get_model("Claude (Anthropic)", lite),
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user_message}],
@@ -97,11 +113,11 @@ def _full_anthropic(system, user_message, max_tokens, api_key):
 # OpenAI (GPT-4o)
 # ---------------------------------------------------------------------------
 
-def _stream_openai(system, user_message, max_tokens, api_key):
+def _stream_openai(system, user_message, max_tokens, api_key, lite=False):
     from openai import OpenAI
     client = OpenAI(api_key=api_key) if api_key else OpenAI()
     stream = client.chat.completions.create(
-        model=PROVIDERS["GPT-4o (OpenAI)"]["model"],
+        model=_get_model("GPT-4o (OpenAI)", lite),
         max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
@@ -129,11 +145,11 @@ def _chat_openai(system, messages, max_tokens, api_key):
             yield chunk.choices[0].delta.content
 
 
-def _full_openai(system, user_message, max_tokens, api_key):
+def _full_openai(system, user_message, max_tokens, api_key, lite=False):
     from openai import OpenAI
     client = OpenAI(api_key=api_key) if api_key else OpenAI()
     response = client.chat.completions.create(
-        model=PROVIDERS["GPT-4o (OpenAI)"]["model"],
+        model=_get_model("GPT-4o (OpenAI)", lite),
         max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
@@ -147,11 +163,11 @@ def _full_openai(system, user_message, max_tokens, api_key):
 # Google Gemini
 # ---------------------------------------------------------------------------
 
-def _stream_gemini(system, user_message, max_tokens, api_key):
+def _stream_gemini(system, user_message, max_tokens, api_key, lite=False):
     import google.generativeai as genai
     genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
     model = genai.GenerativeModel(
-        model_name=PROVIDERS["Gemini 2.5 Pro (Google)"]["model"],
+        model_name=_get_model("Gemini 2.5 Pro (Google)", lite),
         system_instruction=system,
     )
     response = model.generate_content(
@@ -188,11 +204,11 @@ def _chat_gemini(system, messages, max_tokens, api_key):
             yield chunk.text
 
 
-def _full_gemini(system, user_message, max_tokens, api_key):
+def _full_gemini(system, user_message, max_tokens, api_key, lite=False):
     import google.generativeai as genai
     genai.configure(api_key=api_key or os.environ.get("GOOGLE_API_KEY"))
     model = genai.GenerativeModel(
-        model_name=PROVIDERS["Gemini 2.5 Pro (Google)"]["model"],
+        model_name=_get_model("Gemini 2.5 Pro (Google)", lite),
         system_instruction=system,
     )
     response = model.generate_content(
@@ -389,6 +405,48 @@ When the user asks general questions, respond conversationally with expert advic
 
 If you output revised bullets, always use the [P:X] format like:
 [P:5] Orchestrated cross-functional migration of 3 legacy systems to cloud infrastructure, reducing deployment time by 40%"""
+
+
+# ---------------------------------------------------------------------------
+# Slim Re-Score (score-only, uses lite model)
+# ---------------------------------------------------------------------------
+
+RESCORE_SYSTEM_PROMPT = """You are an expert resume scorer. Given a resume and job description, output ONLY the score breakdown table below — no bullet analysis, no keyword tables, no rewrites.
+
+### SCORING BREAKDOWN (1-100):
+- **Semantic Density (30%):** How well do the resume bullets address the JD's pain points?
+- **Quantifiable Impact (30%):** What percentage of bullets include a hard metric ($, %, #)?
+- **ATS Parsability (20%):** 250-char limit adherence, single-column logic, keyword inclusion.
+- **Skill Diversity (20%):** Balance between Leadership, Technical, and Cross-functional bullets.
+
+### OUTPUT FORMAT (output ONLY this, nothing else):
+
+## Resume Score: XX/100
+
+### Score Breakdown
+| Category | Score | Weight | Weighted |
+|----------|-------|--------|----------|
+| Semantic Density | X/100 | 30% | X |
+| Quantifiable Impact | X/100 | 30% | X |
+| ATS Parsability | X/100 | 20% | X |
+| Skill Diversity | X/100 | 20% | X |
+| **Total** | | | **XX/100** |
+
+### Top 3 Remaining Improvements
+Brief bullet list of the 3 highest-impact changes still available."""
+
+
+def rescore_resume(job_title: str, job_description: str, resume_text: str,
+                   profile_section: str = "",
+                   api_key: str | None = None, provider: str = "Claude (Anthropic)"):
+    """Lightweight re-score using lite model — returns score table only."""
+    system = RESCORE_SYSTEM_PROMPT
+    if profile_section:
+        system += "\n\n" + profile_section
+
+    user_msg = f"Position: {job_title}\n\nJob Description:\n{job_description}\n\nResume Content:\n{resume_text}"
+
+    return stream_response(system, user_msg, max_tokens=1500, api_key=api_key, provider=provider, lite=True)
 
 
 def build_chat_system(job_title: str, job_description: str, resume_text: str,

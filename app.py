@@ -9,8 +9,8 @@ from document_handler import (
 )
 from profile_manager import UserProfile, save_profile, load_profile, list_profiles
 from analyzer import (
-    analyze_resume, rewrite_resume,
-    build_chat_system, chat_response, PROVIDERS,
+    analyze_resume, rewrite_resume, rescore_resume,
+    build_chat_system, chat_response, full_response, PROVIDERS,
 )
 
 st.set_page_config(page_title="Resume Analyzer", page_icon="📄", layout="wide")
@@ -96,13 +96,13 @@ with st.sidebar:
         if st.button("✅ Verify Key", key="btn_verify_key"):
             with st.spinner("Testing connection..."):
                 try:
-                    from analyzer import full_response
                     result = full_response(
                         "Respond with only the word: Connected",
                         "Test",
                         max_tokens=10,
                         api_key=api_key,
                         provider=provider,
+                        lite=True,
                     )
                     st.success(f"Key verified — {provider} is connected!")
                 except Exception as e:
@@ -349,16 +349,15 @@ with main_col:
                         )
                     st.session_state["modified_docx"] = modified
 
-                    # Re-score the improved resume
+                    # Re-score the improved resume (slim prompt, lite model)
                     improved_structure = parse_docx(modified)
                     improved_text = extract_plain_text(improved_structure)
                     st.subheader("New Fit Score")
-                    rescore_gen = analyze_resume(
+                    rescore_gen = rescore_resume(
                         st.session_state["job_title"],
                         st.session_state["job_description"],
                         improved_text,
                         profile_section=profile_section,
-                        reference_context=st.session_state["reference_text"],
                         api_key=api_key,
                         provider=provider,
                     )
