@@ -142,10 +142,26 @@ with st.sidebar:
             st.session_state["analysis_result"] = None
             st.session_state["rewrite_result"] = None
             st.session_state["modified_docx"] = None
+            st.session_state["modified_pdf"] = None
             st.session_state["current_rewrites"] = {}
+            st.session_state["chat_messages"] = []
             st.success(f"Loaded: {resume_file.name}")
             if is_pdf:
                 st.info("PDF uploaded — formatting can't be preserved. Output will be a new .docx/.pdf.")
+    else:
+        # File was removed — clear all cached resume data
+        if st.session_state["resume_bytes"] is not None:
+            st.session_state["resume_bytes"] = None
+            st.session_state["resume_structure"] = None
+            st.session_state["resume_text"] = None
+            st.session_state["resume_filename"] = ""
+            st.session_state["resume_is_pdf"] = False
+            st.session_state["analysis_result"] = None
+            st.session_state["rewrite_result"] = None
+            st.session_state["modified_docx"] = None
+            st.session_state["modified_pdf"] = None
+            st.session_state["current_rewrites"] = {}
+            st.session_state["chat_messages"] = []
 
     if st.session_state["resume_text"]:
         with st.expander("Preview Resume Text"):
@@ -179,12 +195,15 @@ with st.sidebar:
         uploaded_ref = "\n\n".join(ref_texts)
         st.success(f"Loaded {len(ref_files)} additional file(s)")
 
-    # Combine bundled + uploaded references
+    # Combine bundled + uploaded references (only current uploads, no stale cache)
     combined_ref = st.session_state.get("bundled_ref_text", "")
     if uploaded_ref:
         combined_ref = combined_ref + "\n\n" + uploaded_ref if combined_ref else uploaded_ref
-    chunks = chunk_reference_material(combined_ref) if combined_ref else []
-    st.session_state["reference_text"] = chunks[0] if chunks else ""
+    if combined_ref:
+        chunks = chunk_reference_material(combined_ref)
+        st.session_state["reference_text"] = chunks[0] if chunks else ""
+    else:
+        st.session_state["reference_text"] = ""
 
     # ── Profile Manager ─────────────────────────────────────────────────────
     st.subheader("User Profile")
