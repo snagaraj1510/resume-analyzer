@@ -6,3 +6,6 @@ venv/
 .streamlit/
 user_profiles/*.json
 !user_profiles/shreyas_nagaraj.json
+data/
+references/*.pdf
+references/*.docx

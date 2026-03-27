@@ -14,7 +14,17 @@ PROVIDERS = {
     "Gemini 2.5 Pro (Google)": {"model": "gemini-2.5-pro-preview-06-05", "env_key": "GOOGLE_API_KEY"},
 }
 
-# Cheap models for lightweight tasks (verify key, re-scoring)
+# Cheap models for lightweight tasks (verify key, re-scoring, validation)
+# Model routing strategy:
+#   MAIN model (Sonnet 4.6 / GPT-4o / Gemini 2.5 Pro):
+#     - Full analysis (scoring rubric — requires nuanced judgment)
+#     - Resume rewrite (creative + guardrail-aware — requires high quality)
+#     - Complex chat interactions (rewriting bullets, strategic advice)
+#   LITE model (Haiku 4.5 / GPT-4o-mini / Gemini 2.0 Flash / Ollama):
+#     - Re-scoring (structured output, simpler judgment)
+#     - API key verification (trivial)
+#     - Validation spot-checks (structured, bounded)
+#     - Simple chat Q&A (non-rewrite questions)
 LITE_MODELS = {
     "Claude (Anthropic)": "claude-haiku-4-5-20251001",
     "GPT-4o (OpenAI)": "gpt-4o-mini",
@@ -315,15 +325,20 @@ GUARDRAILS = """
   * ALLOWED with seniors: "Partnered with," "Co-led," "Drove," "Presented to," "Collaborated with"
   * BANNED (implies authority OVER them): "Directed," "Managed," "Oversaw," "Supervised," "Instructed"
 - Ownership levels: "Owned" = sole responsibility; "Led" = primary driver; "Co-led" = shared; "Contributed to" = team effort.
+- For SWE: distinguish "Designed the system" (you made arch decisions) vs "Implemented the service" (you wrote code for someone else's design).
+- For PM: distinguish "Owned the roadmap" (you decided priorities) vs "Influenced the roadmap" (you provided input).
 - **Interview test:** Can the user speak to this bullet for 2-3 minutes with honest, specific details? If no, tone it down.
 
 ### G3: BULLET FORMAT & LIMITS
-- **Character limits:** TARGET <185 chars. FLAG 185-220. HARD CEILING 250 — must be rewritten if exceeded.
+- **Voice:** First-Person Implied — every bullet starts with a strong past-tense action verb (e.g., "Led...", "Built...", "Drove..."). NEVER use "I" or "My". NEVER use third-person ("He led...", "She built...").
+- **Character limits:** TARGET <220 chars. FLAG 220-250. HARD CEILING 250 — must be rewritten if exceeded.
 - **Trimming priority:** Result > Action > Context (keep impact, tighten setup).
 - **Bullet format:** Auto-detect from resume — ACR (Action→Context→Result), STAR-lite (Action→Technical Detail→Impact), or XYZ (Accomplished X by doing Y measured by Z). Apply consistently. If inconsistent, standardize to ACR.
+- **Business Impact emphasis (HIGH PRIORITY):** Every bullet MUST end with or contain a quantifiable business outcome — revenue ($), cost savings ($), time saved (%), efficiency gain (%), user/customer impact (count), or growth metric (%). Bullets without measurable impact score significantly lower and prevent reaching 80+ scores. If a metric exists in the fact base, USE it. If derivable, DERIVE it. If neither, use [INSERT METRIC] placeholder. Target: 100% of bullets should have at least one metric.
 - **Verb uniqueness:** NO TWO BULLETS on the entire resume may start with the same verb.
 - **BANNED as lead verbs:** "Responsible for," "Assisted with," "Helped," "Participated in," "Was involved in"
 - **BANNED words/phrases (LLM-isms):** "Spearheaded," "Leveraged," "Synergy," "Passionate," "Dynamic," "Deep dive"
+- **NO MARKDOWN IN OUTPUT:** Never use asterisks (**bold**, *italic*), underscores (__text__), or backticks in bullet text. Output plain text only — the Word document handles all formatting.
 - Use standard abbreviations: GTM, SaaS, BU, FP&A, API, CI/CD, K8s, ML, NLP, etc.
 
 ### G4: SKILL STORY DIVERSITY
@@ -332,7 +347,7 @@ GUARDRAILS = """
 - Flag word-level repetition: if any non-trivial word appears in >2 bullets, flag it (exception: JD keywords needed for ATS).
 
 ### G5: ROLE-SPECIFIC FRAMING
-- Auto-detect the target role type from the JD and apply the appropriate framing lens.
+- Auto-detect the target role type from the JD and apply the appropriate framing lens (see FRAMING LENSES section).
 - Same underlying work CAN and SHOULD be framed differently depending on the target function — this is adjusting emphasis, not hallucination.
 - If the resume reads as one function but the target is another, reframe where the experience honestly supports it. Flag gaps honestly where it cannot.
 
@@ -340,9 +355,99 @@ GUARDRAILS = """
 - 85+: passes most ATS screens, clear positive signal. 70-84: submittable with gaps. <70: significant tailoring needed.
 - NEVER inflate scores. Large keyword gaps tank the score even if bullets are well-written.
 - Flag irreducible gaps honestly: tools never used, years shortfall, industry gaps, degree requirements. These CANNOT be fixed by resume tailoring.
+- Before/after scoring must use the SAME rubric. Improvement must be traceable to specific changes.
 
 ### G7: CHANGE TRANSPARENCY
 - Every change must be documented: original text, revised text, char counts, reason (which JD gap it closes), and guardrail check status.
+
+### G8: USER OVERRIDE PROTOCOL
+- Users can override any suggestion, but the tool must WARN if the override violates a guardrail.
+- Example: User wants to add Kubernetes to skills but has not used it → "Warning: Kubernetes is not in your Known Tools list. Adding it would violate G1. If you have acquired K8s experience since your profile was last updated, confirm and I will add it. Otherwise, I recommend listing Docker as the closest truthful proxy."
+- The user's final decision stands, but the warning is logged.
+
+## EDGE CASES
+- **JD requires a tool not in user's experience:** Do NOT add it. Flag in gap analysis as "cannot close on resume." Suggest closest proxy.
+- **JD requires more years than user has:** Do NOT inflate tenure. Flag honestly. Suggest framing depth of impact over years.
+- **JD is for a completely unrelated function:** If zero relevant experience, say so clearly. Do NOT force-fit. Identify genuinely transferable skills if they exist.
+- **Bullet cannot hit 220 chars without losing key JD alignment:** Use standard abbreviations. If truly cannot condense below 250, accept 250 and flag it.
+- **User has no profile and refuses to confirm facts:** Deliver analysis with every rewrite marked "UNVERIFIED." Include warning about submitting unverified claims.
+- **Resume has non-standard sections (PROJECTS, OPEN SOURCE, PUBLICATIONS, PORTFOLIO):** Parse dynamically, apply same bullet-level analysis, preserve in output.
+
+## ROLE-SPECIFIC FRAMING LENSES
+Auto-detect from JD and apply the matching lens. Same work framed through different lenses is NOT hallucination — it is adjusting emphasis and language.
+
+**SOFTWARE ENGINEERING (Backend / Fullstack / Platform):**
+  Emphasize: system design, scalability, reliability, performance, code quality, technical leadership, mentoring.
+  Keywords: "distributed systems," "microservices," "API," "latency," "throughput," "availability," "observability," "CI/CD," "testing."
+  Bullet pattern: Built/Designed [system] using [tech], achieving [metric].
+
+**SOFTWARE ENGINEERING (Frontend / UI):**
+  Emphasize: user experience, performance, accessibility, design systems, cross-browser compatibility, component architecture.
+  Keywords: "responsive," "accessibility," "component library," "state management," "Core Web Vitals," "design system."
+
+**ML / AI ENGINEERING:**
+  Emphasize: model development, training infrastructure, evaluation metrics, production deployment, data pipelines, experimentation.
+  Keywords: "model training," "inference," "feature engineering," "A/B testing," "precision/recall," "latency," "GPU utilization," "MLOps."
+
+**DATA SCIENCE / ANALYTICS:**
+  Emphasize: statistical analysis, experimentation, insight generation, business impact of findings, stakeholder communication.
+  Keywords: "hypothesis testing," "causal inference," "A/B testing," "dashboards," "segmentation," "forecasting," "storytelling with data."
+
+**DATA ENGINEERING:**
+  Emphasize: pipeline design, data quality, scale, reliability, warehouse architecture, ETL/ELT, real-time vs batch.
+  Keywords: "data pipeline," "ETL," "data warehouse," "data quality," "schema design," "Spark," "Airflow," "real-time," "SLA."
+
+**PRODUCT MANAGEMENT:**
+  Emphasize: customer insight, prioritization, roadmap ownership, metric definition, cross-functional leadership, launch execution.
+  Keywords: "product roadmap," "user research," "OKRs," "prioritization framework," "product-market fit," "experimentation," "launch."
+
+**PRODUCT DESIGN / UX:**
+  Emphasize: user-centered design, research methods, prototyping, design systems, accessibility, collaboration with engineering.
+  Keywords: "user research," "usability testing," "wireframes," "prototypes," "design system," "accessibility," "interaction design."
+
+**STRATEGY / CORPORATE STRATEGY:**
+  Emphasize: market sizing, growth opportunities, competitive landscape, strategic recommendations, executive/board communication.
+  Keywords: "growth strategy," "market assessment," "strategic priorities," "business case," "implementation planning."
+
+**BIZOPS / BUSINESS OPERATIONS:**
+  Emphasize: process design, operational efficiency, KPI frameworks, cross-functional program management, scaling.
+  Keywords: "operational efficiency," "process improvement," "KPI tracking," "program management," "scaling."
+
+**STRATEGIC FINANCE / FP&A:**
+  Emphasize: revenue forecasting, P&L, variance analysis, financial modeling, business partnership, planning cycles.
+  Keywords: "revenue forecasting," "P&L," "financial planning," "business partnership," "investment decisions."
+
+**CORP DEV / M&A:**
+  Emphasize: due diligence, valuation, partnership evaluation, market assessment, competitive intelligence.
+  Keywords: "due diligence," "partnership evaluation," "market entry," "ecosystem," "strategic rationale."
+
+**GTM / REVOPS / SALES OPS:**
+  Emphasize: pipeline, territory planning, quota, sales analytics, GTM strategy, conversion metrics.
+  Keywords: "pipeline," "GTM," "quota," "territory planning," "revenue operations," "bookings."
+
+**MARKETING / GROWTH:**
+  Emphasize: acquisition, retention, conversion, content strategy, SEO/SEM, lifecycle marketing, experimentation.
+  Keywords: "CAC," "LTV," "conversion rate," "funnel optimization," "attribution," "growth loops," "retention."
+
+**CONSULTING:**
+  Emphasize: client engagement, workstream leadership, hypothesis-driven analysis, implementation planning.
+  Keywords: "structured problem solving," "workstream leadership," "client engagement," "implementation," "change management."
+
+**PROGRAM / PROJECT MANAGEMENT:**
+  Emphasize: execution, risk management, stakeholder coordination, timeline management, resource allocation, delivery.
+  Keywords: "program management," "risk mitigation," "stakeholder management," "on-time delivery," "resource planning," "agile/scrum."
+
+### CROSS-FUNCTION REFRAMING EXAMPLES
+Same work, different lenses — this is allowed and encouraged:
+
+An engineer who also defined product requirements:
+  SWE target: "Built real-time notification service using WebSockets and Redis, reducing delivery latency 85% for 2M daily users"
+  PM target: "Defined and shipped real-time notification system serving 2M daily users, collaborating with design and backend teams to reduce delivery latency 85%"
+
+A finance person who did operational work:
+  Finance target: "Built forecasting model for market expansion"
+  BizOps target: "Co-developed go-to-market forecasting framework supporting expansion into 10 territories, generating $3M profit"
+  Strategy target: "Evaluated new market entry opportunity across 10 territories, projecting $3M annual profit to inform executive go/no-go decision"
 """
 
 
@@ -376,7 +481,7 @@ Extract:
 
 ### Dimension 2: Bullet Quality & Format (25 points)
   A. **Structure Compliance (10 pts):** Each bullet needs clear action + context/scope + result. Deduct 1pt per broken bullet. Flag: no result, starts with noun, lists activities without outcomes, "Responsible for..." framing, listing tech without impact.
-  B. **Character Length (5 pts):** Target <185 chars. Flag 185-220. Hard ceiling 250. Deduct 0.5pt per bullet over 220 chars.
+  B. **Character Length (5 pts):** Target <220 chars. Flag 220-250. Hard ceiling 250. Deduct 0.5pt per bullet over 250 chars.
   C. **Action Verb Uniqueness (5 pts):** No two bullets may start with the same verb. Deduct 1pt per duplicate pair.
   D. **Skill Story Diversity (5 pts):** Each bullet should showcase a different capability. Tag each bullet. If >2 bullets share a tag, flag the weakest.
 
@@ -392,79 +497,32 @@ Extract:
   D. **Skills Section Optimization (3 pts):** Mirrors JD tool/tech stack? Organized by category for the target function?
   E. **Consistency (2 pts):** Date formatting, punctuation, tense, bullet structure consistent?
 
-## OUTPUT FORMAT
+## OUTPUT FORMAT — SUCCINCT
 
 ## Resume Score: XX/100
 
 ### Detected Role Type: [type]
 
 ### Score Breakdown
-| Dimension | Sub-score | Points | Score |
-|-----------|-----------|--------|-------|
-| **Keyword & ATS Alignment** | | **/40** | |
-| — Hard Skills & Tools | (X matched / Y in JD) | /15 | X |
-| — Domain Keywords | (X matched / Y extracted) | /15 | X |
-| — Role-Function Language | | /10 | X |
-| **Bullet Quality & Format** | | **/25** | |
-| — Structure Compliance | | /10 | X |
-| — Character Length | | /5 | X |
-| — Verb Uniqueness | | /5 | X |
-| — Skill Story Diversity | | /5 | X |
-| **Role Relevance & Framing** | | **/20** | |
-| — Title Alignment | | /5 | X |
-| — Framing Lens Match | | /10 | X |
-| — Seniority Honesty | | /5 | X |
-| **Overall Polish** | | **/15** | |
-| — Recruiter Scan Test | | /5 | X |
-| — Section Ordering | | /3 | X |
-| — Space Utilization | | /2 | X |
-| — Skills Section | | /3 | X |
-| — Consistency | | /2 | X |
-| **TOTAL** | | | **XX/100** |
+| Dimension | Points | Score |
+|-----------|--------|-------|
+| Keyword & ATS Alignment | /40 | X |
+| Bullet Quality & Format | /25 | X |
+| Role Relevance & Framing | /20 | X |
+| Overall Polish | /15 | X |
+| **TOTAL** | **/100** | **XX** |
 
-### Keyword Gap Table
-#### Strong Matches
-| Keyword | Where It Appears |
-|---------|-----------------|
-
-#### Weak Matches (synonym/variant present)
-| JD Keyword | Resume Says Instead | Suggested Fix |
-|------------|--------------------| --------------|
-
-#### Missing Keywords
-| Keyword | Category | Can Be Added? | How to Incorporate |
-|---------|----------|---------------|--------------------|
-(If user profile says they don't have this skill: "No — not in user's experience. Closest proxy: [X]")
-
-### Bullet-by-Bullet Audit
-
-For each bullet:
-
-**[P:X] "original bullet text"** (XXX chars)
-- Structure: X/10 — [Action: ✓/✗] [Context: ✓/✗] [Result: ✓/✗]
-- Char count: [OK / FLAG / OVER LIMIT]
-- Verb: [unique / duplicate of P:Y]
-- Skill tag: [tag]
-- JD alignment: [which JD requirement this addresses, or "weak alignment"]
-- Verdict: [KEEP / TWEAK / REWRITE]
-- Suggested Rewrites (if TWEAK or REWRITE — provide 2-3 variations each highlighting a different skill story):
-  1. "rewrite" (XXX chars) — addresses [JD requirement]
-  2. "rewrite" (XXX chars) — addresses [JD requirement]
-  3. "rewrite" (XXX chars) — addresses [JD requirement]
-
-### Action Verb Index
-List every starting verb across the entire resume — flag duplicates.
-
-### Skill Diversity Map
-| Skill Tag | Bullets | Coverage |
-|-----------|---------|----------|
-(Tags should be role-appropriate. Flag any tag used >2x.)
+### Gaps to Close (3-5 bullets max)
+Do not explain why unless asked. Just list the missing semantic keywords or experience gaps.
+- [gap 1: missing keyword/skill/experience]
+- [gap 2: ...]
+- [gap 3: ...]
 
 ### Irreducible Gaps
-Honest list of JD requirements that CANNOT be fixed by resume tailoring (tools never used, years shortfall, industry gaps, degree requirements). Suggest how to address in cover letter or interviews.
+Honest list of JD requirements that CANNOT be fixed by resume tailoring (max 3). Flag tools never used, years shortfall, or degree requirements only.
 
 ### Top 5 Priority Fixes
-Ranked by impact. Each fix should reference specific bullets and JD requirements."""
+Ranked by impact. Reference specific [P:X] bullets and JD requirements. One sentence each."""
 
 
 def analyze_resume(job_title: str, job_description: str, resume_text: str,
@@ -487,9 +545,65 @@ def analyze_resume(job_title: str, job_description: str, resume_text: str,
 # Resume Rewrite
 # ---------------------------------------------------------------------------
 
-REWRITE_SYSTEM_PROMPT = """You are an expert resume rewriter. You improve resumes based on prior analysis to close JD gaps and raise scores to 85+.
+REWRITE_SYSTEM_PROMPT = """You are an expert resume rewriter. You follow a precise multi-step workflow — the same process a senior career coach would use to tailor a resume to a specific job description.
 
 """ + GUARDRAILS + """
+
+## STEP 1: EXTRACT JD SKILL THEMES
+Before touching a single bullet, read the JD and extract 6-8 distinct abilities/skill themes it demands.
+Examples: "cross-functional leadership", "data-driven decision making", "stakeholder communication",
+"financial modeling", "strategic planning", "technical execution", "process optimization", "team management".
+These themes become your ASSIGNMENT PALETTE — every bullet on the resume must map to one.
+
+## STEP 2: INVENTORY CURRENT BULLETS
+For each existing bullet, note:
+- Which skill theme it currently demonstrates (if any)
+- Whether it has ACR format (Action → Context → Result)
+- Its character count
+- Its starting verb
+
+## STEP 3: ASSIGN SKILL THEMES TO BULLETS
+Map each bullet to a DIFFERENT JD skill theme from your palette. Rules:
+- No two bullets on the entire resume should showcase the same primary skill theme.
+- Prioritize the JD's most-repeated or highest-weighted abilities for the most recent roles.
+- If a bullet doesn't map to any JD theme and there's no room, it's a candidate for cutting or merging.
+- The full resume should "cover" as many of the 6-8 JD themes as possible — this is what makes a recruiter think "this person checks every box."
+
+## STEP 4: REWRITE IN ACR FORMAT
+Every bullet must follow Action → Context → Result format:
+- **Action:** Strong, unique past-tense verb (Led, Built, Drove, Optimized, Designed, Analyzed...)
+- **Context:** What you did it on/with — project, team, stakeholder, tool, scope
+- **Result:** Measurable business outcome — $ revenue, % improvement, count, time saved
+- The result is what the recruiter remembers. Put it last so it lands.
+
+Example: "Optimized $1B incentive spend through 60+ A/B experiments with 7 cross-functional teams, improving forecast accuracy and growing market share 4%"
+  → Action: Optimized | Context: $1B incentive spend, 60+ A/B experiments, 7 teams | Result: forecast accuracy + 4% share growth
+
+## RESUME TYPE DETECTION
+Auto-detect the resume type from the content and JD:
+- If the resume is Technical/Software Engineering: Focus rewrites on 'Languages', 'Frameworks', system design, and technical impact metrics (latency, throughput, uptime).
+- If the resume is Finance/MBA/Strategy: Focus rewrites on 'Metrics', 'Business Impact', revenue, cost savings, and stakeholder influence.
+- If the resume is mixed: Prioritize whichever lens the TARGET JD demands.
+
+## ONE-PAGE MANDATE — SPATIAL CONSTRAINT
+You are a professional resume architect. The user's career depends on this being 1 page.
+- CRITICAL: The final resume MUST fit on 1 page with 0.5" margins, Calibri 10pt, single line spacing. Target under 525 words.
+- HARD CONTENT CAP: Total bullet count must not exceed 15 across the entire document. If the user has more, you MUST merge or delete the least relevant bullets from older roles.
+- If a bullet would wrap to 2+ lines in a Word document (roughly >200 chars at 10pt Calibri), it is too long. Shorten it.
+- If the content is trending long, you MUST consolidate the 'Education' leadership bullets and remove the 2nd or 3rd bullet from roles older than 3 years.
+- If the content is too long, consolidate the 'Additional' section into 3-4 lines total and merge the two oldest job roles into single-bullet summaries.
+- Do not ask for permission; just ensure it fits. Be ruthless with fluff.
+- Condense aggressively — cut filler words, use abbreviations (GTM, SaaS, BU, FP&A).
+
+## DEFAULT STYLE & SECTION ORDER
+The output must match the Default_Resume.docx template style:
+- Section order: EXPERIENCE → EDUCATION → ADDITIONAL. Education MUST come AFTER work experience.
+- Name: centered, ALL CAPS, 14pt bold. Contact: centered, 9.5pt.
+- Section headers: ALL CAPS, bold, with bottom border line.
+- Company names: ALL CAPS, bold, with right-aligned location. Title: italic, with right-aligned dates.
+- Bullets: action-verb led, Calibri 10pt.
+- Additional/Skills section: "Label: value" format (label bolded before colon).
+- Claude has agency to restructure, merge, or reorder content within these boundaries to ensure a cohesive, polished 1-page document.
 
 ## REWRITE RULES
 - The resume text has paragraph markers like [P:0], [P:1], etc.
@@ -498,22 +612,26 @@ REWRITE_SYSTEM_PROMPT = """You are an expert resume rewriter. You improve resume
 - Do NOT output paragraphs that should remain unchanged.
 - Do NOT add new paragraphs or remove existing ones.
 
-## REWRITE STANDARDS
-- Every rewritten bullet must follow the detected bullet format (ACR, STAR-lite, or XYZ) consistently.
-- Every rewritten bullet must be under 185 characters (flag 185-220, hard ceiling 250).
-- Every rewritten bullet must start with a unique action verb not used elsewhere on the resume.
-- Every rewritten bullet must be grounded in the user's real experience (profile or resume).
-- Apply the correct role-specific framing lens for the target function.
-- Incorporate missing ATS keywords naturally where truthful.
-- Adjust emphasis to match the target function's lens — this is framing, not fabrication.
-- If a metric is missing and you cannot derive it, use **[INSERT METRIC]** placeholder.
+## BULLET QUALITY CHECKLIST (apply to EVERY bullet before outputting)
+1. FORMAT: Is it clean ACR? Action verb → Context → Result? Easy for a recruiter to scan in 6 seconds?
+2. LENGTH: Is it under 250 characters? (Target <220. Hard ceiling 250. 2 lines max in Word.)
+3. VERB: Does it start with a unique past-tense action verb not used by any other bullet on the resume?
+4. SKILL THEME: Does it highlight a DIFFERENT JD-required ability than every other bullet?
+5. ATS: Does it contain at least one keyword from the JD that wasn't in the original?
+6. RESULT: Does it end with a quantifiable business outcome ($, %, count)?
+If ANY check fails, fix the bullet before outputting it.
 
-## DIFF REPORT FORMAT
-For each changed paragraph:
-[P:X] new bullet text here
-- **Original:** "exact original text" (XXX chars)
-- **Reason:** Which JD gap this closes
-- **Checks:** fact base ✓/✗, seniority honest ✓/✗, under limit ✓/✗, unique verb ✓/✗, new skill tag ✓/✗"""
+## CRITICAL OUTPUT RULES
+- VOICE: Use First-Person Implied. FORMAT: Plain text only. NO asterisks, bolding, or markdown.
+- PLAIN TEXT ONLY: Do NOT use any Markdown formatting (**, *, __, `) in your [P:X] output. The text goes directly into a Word document — asterisks and underscores will appear as literal characters and look broken.
+- FIRST-PERSON IMPLIED: Start every bullet with a past-tense action verb. Never use "I", "My", "He", "She", or "They".
+- BUSINESS IMPACT: Every bullet must end with a measurable outcome ($ revenue, % cost savings, % time reduction, user count, growth %). Bullets without quantifiable impact will score poorly.
+
+## OUTPUT FORMAT — STRICT
+Output ONLY lines in this exact format, one per changed paragraph:
+[P:X] revised bullet text here
+
+FORBIDDEN in output: NEVER output "Original:", "Reason:", "Checks:", diff reports, explanations, commentary, or any text that is not a [P:X] line. Use those labels for internal validation ONLY — they must NEVER appear in the response. The parser discards everything except [P:X] lines. Keep your reasoning internal — only output the revised text."""
 
 
 def rewrite_resume(job_title: str, job_description: str, resume_text: str,
@@ -521,7 +639,16 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "", reference_context: str = "",
                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
                    ollama_model: str | None = None) -> str:
-    """Non-streaming resume rewrite. Returns full response for programmatic parsing."""
+    """Non-streaming resume rewrite with self-healing validation loop.
+
+    After the initial LLM rewrite, immediately validates the new bullets.
+    If validation finds warnings or issues (char count > 250, repeated verbs,
+    missing ACR), automatically sends a correction prompt and re-validates.
+    Up to 2 correction passes before returning the best available result.
+    """
+    import re as _rr
+    from document_handler import parse_rewrite_response as _parse_rr
+
     system = REWRITE_SYSTEM_PROMPT
     if profile_section:
         system += "\n\n" + profile_section
@@ -537,7 +664,155 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
 
     user_msg += "\n\nRewrite the paragraphs that need improvement. Output ONLY changed paragraphs in [P:X] format."
 
-    return full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider, ollama_model=ollama_model)
+    # Retry up to 3 times on transient API errors
+    import time as _time
+    raw_response = None
+    for _attempt in range(3):
+        try:
+            raw_response = full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider, ollama_model=ollama_model)
+            break
+        except Exception as _e:
+            err_str = str(_e)
+            if any(code in err_str for code in ("500", "529", "503", "overloaded")):
+                if _attempt < 2:
+                    _time.sleep(2 ** _attempt)
+                    continue
+            raise
+    if raw_response is None:
+        return ""
+
+    # ── Self-healing loop: validate → correct → re-validate (max 2 passes) ──
+    MAX_CORRECTION_PASSES = 2
+    current_response = raw_response
+
+    for pass_num in range(MAX_CORRECTION_PASSES):
+        # Build a synthetic resume text with rewrites applied for validation
+        new_bullets = _parse_rr(current_response)
+        if not new_bullets:
+            break
+
+        # Merge rewrites into the original resume text for validation
+        merged_lines = []
+        for line in resume_text.strip().split("\n"):
+            m = _rr.match(r'\[P:(\d+)\]\s*(.*)', line)
+            if m:
+                idx = int(m.group(1))
+                if idx in new_bullets:
+                    merged_lines.append(f"[P:{idx}] {new_bullets[idx]}")
+                else:
+                    merged_lines.append(line)
+            else:
+                merged_lines.append(line)
+        merged_text = "\n".join(merged_lines)
+
+        validation = validate_resume(merged_text, profile_section)
+
+        # Collect all actionable failures (issues AND warnings)
+        all_failures = validation.issues + validation.warnings
+        if not all_failures:
+            break  # Clean — stop
+
+        # Build list of failed bullets with their specific violations
+        failed_map: dict[int, list[str]] = {}
+        for msg in all_failures:
+            idxs = _rr.findall(r'\[P:(\d+)\]', msg)
+            for idx_str in idxs:
+                failed_map.setdefault(int(idx_str), []).append(msg)
+
+        # Only keep bullets that we actually rewrote
+        failed_bullets_to_fix = []
+        for p_idx, violations in failed_map.items():
+            bullet_text = new_bullets.get(p_idx)
+            if bullet_text:
+                failed_bullets_to_fix.append({
+                    "index": p_idx,
+                    "text": bullet_text,
+                    "violations": list(set(violations)),
+                })
+
+        if not failed_bullets_to_fix:
+            break  # No fixable bullets
+
+        # Build the correction prompt with the exact format requested
+        violation_lines = []
+        for fb in failed_bullets_to_fix:
+            violation_lines.append(f"[P:{fb['index']}] {fb['text']}")
+            for v in fb["violations"]:
+                violation_lines.append(f"  - {v}")
+        violations_block = "\n".join(violation_lines)
+
+        correction_prompt = (
+            f"The following bullets failed validation:\n{violations_block}\n\n"
+            "Fix each bullet to satisfy ALL of these requirements:\n"
+            "1. UNDER 250 characters (hard ceiling, target <220).\n"
+            "2. Starts with a UNIQUE high-impact action verb — no duplicates within the same experience block or across the resume.\n"
+            "3. Follows ACR format: [Strong Verb] + [Context/Project] + [Quantifiable Result with $, %, or #].\n"
+            "4. NO markdown/asterisks — plain text only.\n"
+            "Output ONLY fixed [P:X] lines. No commentary."
+        )
+
+        try:
+            fix_response = full_response(
+                system, correction_prompt, max_tokens=4000,
+                api_key=api_key, provider=provider, ollama_model=ollama_model,
+            )
+            fix_bullets = _parse_rr(fix_response)
+            if fix_bullets:
+                # Merge corrections into the current response's bullet map
+                new_bullets.update(fix_bullets)
+                # Rebuild the response string so downstream parsers work
+                response_lines = []
+                for idx in sorted(new_bullets.keys()):
+                    response_lines.append(f"[P:{idx}] {new_bullets[idx]}")
+                current_response = "\n".join(response_lines)
+            else:
+                break  # Correction returned nothing — stop
+        except Exception:
+            break  # LLM call failed — return best effort
+
+    # ── Metric Injection Pass: if estimated score < 80, retry with metric-focused prompt ──
+    final_bullets = _parse_rr(current_response)
+    if final_bullets:
+        # Quick check: count bullets with quantifiable metrics
+        metric_bullets = sum(
+            1 for t in final_bullets.values()
+            if _rr.search(r'[\$%]|\d+%|\d+\+?\s*(users|customers|teams|regions|markets)', t)
+        )
+        total_bullets = len(final_bullets)
+        metric_ratio = metric_bullets / total_bullets if total_bullets > 0 else 1.0
+
+        if metric_ratio < 0.7:
+            # Less than 70% of bullets have metrics — run metric injection pass
+            metric_prompt = (
+                "METRIC INJECTION PASS — Maximizing Business Impact and Quantitative Results.\n\n"
+                "The following rewritten bullets lack quantifiable business outcomes. "
+                "Every bullet MUST contain at least one metric: $ revenue, % improvement, "
+                "count of users/teams/markets, or time saved. "
+                "If a real metric exists in the resume or profile, USE it. "
+                "If derivable, DERIVE it. If neither, use [INSERT METRIC] placeholder.\n\n"
+                "Bullets to improve:\n"
+            )
+            for idx, text in final_bullets.items():
+                if not _rr.search(r'[\$%]|\d+%|\d+\+?\s*(users|customers|teams|regions|markets)', text):
+                    metric_prompt += f"[P:{idx}] {text}\n"
+            metric_prompt += "\nOutput ONLY fixed [P:X] lines. No commentary."
+
+            try:
+                metric_response = full_response(
+                    system, metric_prompt, max_tokens=4000,
+                    api_key=api_key, provider=provider, ollama_model=ollama_model,
+                )
+                metric_fixes = _parse_rr(metric_response)
+                if metric_fixes:
+                    final_bullets.update(metric_fixes)
+                    response_lines = []
+                    for idx in sorted(final_bullets.keys()):
+                        response_lines.append(f"[P:{idx}] {final_bullets[idx]}")
+                    current_response = "\n".join(response_lines)
+            except Exception:
+                pass  # Best effort — return what we have
+
+    return current_response
 
 
 # ---------------------------------------------------------------------------
@@ -552,28 +827,47 @@ CHAT_SYSTEM_PROMPT = """You are an expert resume writing coach having an interac
 You have access to the user's current resume (with [P:X] paragraph markers), the target job description, prior analysis results, and the user's profile constraints.
 
 When the user asks you to modify specific bullets or sections:
-1. Provide 2-3 variations for each bullet, each highlighting a different skill story and addressing a different JD requirement
-2. Include character count for each suggestion
-3. Format changes as [P:X] markers so they can be applied to the document
-4. Explain WHY you made each change and which JD gap it closes
-5. Verify verb uniqueness against other bullets on the resume
-6. Apply the correct role-specific framing lens
+1. Output your BEST rewrite for each bullet as a [P:X] line — these are applied directly to the resume document
+2. After the [P:X] lines, briefly explain what you changed and which JD gap it closes
+3. Verify verb uniqueness against other bullets on the resume
+4. Apply the correct role-specific framing lens
+5. Keep each bullet under 250 characters in ACR format
+
+When the user gives a style directive (e.g., "make it punchier", "more metrics", "tighten everything"):
+- Rewrite ALL relevant bullets and output them as [P:X] lines
+- Changes are applied automatically to generate an updated resume
 
 When the user asks general questions, respond conversationally with expert advice.
 
 If the user wants to add a tool/skill not in their profile, warn them per Guardrail G1 but respect their final decision.
 
-If you output revised bullets, always use the [P:X] format like:
-[P:5] Orchestrated cross-functional migration of 3 legacy systems to cloud infrastructure, reducing deployment time by 40% (142 chars)"""
+CRITICAL FORMAT: When outputting revised bullets, ALWAYS use the [P:X] format. Each [P:X] line you output will be applied directly to the resume document. Example:
+[P:5] Orchestrated cross-functional migration of 3 legacy systems to cloud infrastructure, reducing deployment time by 40%
+
+CRITICAL: Use PLAIN TEXT ONLY in [P:X] lines — no asterisks, no underscores, no backticks, no Markdown, no character counts in parentheses. The text is injected directly into a Word document."""
 
 
 # ---------------------------------------------------------------------------
 # Slim Re-Score (score-only, uses lite model)
 # ---------------------------------------------------------------------------
 
-RESCORE_SYSTEM_PROMPT = """You are an expert resume scorer. Given a resume and job description, output ONLY the score breakdown table — no bullet analysis, no keyword tables, no rewrites. Be strict — do NOT inflate scores.
+RESCORE_SYSTEM_PROMPT = """You are an expert resume scorer. Given a resume and job description, output ONLY the score breakdown table — no bullet analysis, no keyword tables, no rewrites. Score CANDIDLY and realistically.
 
-### OUTPUT FORMAT (output ONLY this, nothing else):
+## SCORING PHILOSOPHY
+Your goal is to MAXIMIZE the score while staying honest. A well-tailored resume for a genuinely relevant role should score 80-85+. Push the score as high as the evidence supports.
+
+## SCORING RULES
+- If the JD requires fundamentally different skills than the resume demonstrates (e.g., JD wants Senior Java Developer but resume is Junior Marketing Manager), reflect a realistic score (30-50). Do NOT hallucinate a match. Maximize alignment where genuine overlap exists.
+- For a resume that IS relevant to the role:
+  - Score generously on dimensions where the candidate genuinely matches
+  - Give full credit for transferable skills and reframed experience
+  - Bullets in proper ACR format with results should score near-max on Bullet Quality
+  - Unique verbs, concise bullets (<250 chars), and clear outcomes earn top marks
+- Duplicate starting verbs: deduct 2 points per pair from Bullet Quality.
+- Any bullet over 250 chars: automatic -3 from Bullet Quality.
+- If the maximum achievable score is below 85, clearly explain in "Irreducible Gaps" what prevents a higher score (e.g., years of experience shortfall, missing certifications, lack of specific domain experience) and note that a cover letter could address these.
+
+### OUTPUT FORMAT (output ONLY this, nothing else — no markdown bold):
 
 ## Resume Score: XX/100
 
@@ -584,7 +878,7 @@ RESCORE_SYSTEM_PROMPT = """You are an expert resume scorer. Given a resume and j
 | Bullet Quality & Format | /25 | X |
 | Role Relevance & Framing | /20 | X |
 | Overall Polish | /15 | X |
-| **TOTAL** | **/100** | **XX** |
+| TOTAL | /100 | XX |
 
 ### Top 3 Remaining Improvements
 Brief bullet list of the 3 highest-impact changes still available.
@@ -593,18 +887,188 @@ Brief bullet list of the 3 highest-impact changes still available.
 Any JD requirements that cannot be fixed by resume tailoring."""
 
 
+def _apply_score_adjustments(raw_score_text: str, resume_text: str) -> str:
+    """Apply hard penalty if any bullet exceeds 250 characters.
+
+    - If ANY bullet exceeds 250 characters: final_score *= 0.8
+    """
+    import re as _sr
+
+    # Parse bullets from resume text
+    bullets = []
+    for line in resume_text.strip().split("\n"):
+        m = _sr.match(r'\[P:\d+\]\s*(.+)', line)
+        if m:
+            text = m.group(1).strip()
+            is_bullet = (
+                text.startswith(("•", "-", "–", "▪"))
+                or (len(text) > 30 and text[0].isupper() and not text.isupper())
+            )
+            if is_bullet:
+                clean = _sr.sub(r'^[•\-–▪■]\s*', '', text)
+                bullets.append(clean)
+
+    # Check for over-limit bullets
+    has_overlimit = any(len(b) > 250 for b in bullets)
+
+    if not has_overlimit:
+        return raw_score_text  # No adjustments needed
+
+    # Parse the total score from the LLM output
+    score_match = _sr.search(r'Resume Score:\s*(\d+)', raw_score_text)
+    if not score_match:
+        score_match = _sr.search(r'TOTAL\s*\|\s*/100\s*\|\s*(\d+)', raw_score_text)
+    if not score_match:
+        return raw_score_text  # Can't parse — return as-is
+
+    original_score = int(score_match.group(1))
+    adjusted_score = int(original_score * 0.8)
+
+    adjustment_note = f"\n\n### Score Adjustments Applied\n"
+    adjustment_note += f"- Raw LLM Score: {original_score}/100\n"
+    adjustment_note += f"- Over-250-char penalty: x0.8 (at least one bullet exceeds 250 chars)\n"
+    adjustment_note += f"- **Final Adjusted Score: {adjusted_score}/100**\n"
+
+    updated_text = _sr.sub(
+        r'(Resume Score:\s*)\d+(/100)',
+        f'\\g<1>{adjusted_score}\\2',
+        raw_score_text,
+        count=1,
+    )
+    updated_text += adjustment_note
+
+    return updated_text
+
+
 def rescore_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "",
                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
                    ollama_model: str | None = None):
-    """Lightweight re-score using lite model — returns score table only."""
+    """Lightweight re-score using lite model with post-hoc score adjustments.
+
+    After the LLM produces a raw score, applies:
+    - Hard multiplier (x0.8) if any bullet exceeds 250 characters
+    """
     system = RESCORE_SYSTEM_PROMPT
     if profile_section:
         system += "\n\n" + profile_section
 
     user_msg = f"Position: {job_title}\n\nJob Description:\n{job_description}\n\nResume Content:\n{resume_text}"
 
-    return stream_response(system, user_msg, max_tokens=1500, api_key=api_key, provider=provider, lite=True, ollama_model=ollama_model)
+    # Collect the full response first (non-streaming) so we can post-process
+    # Retry up to 3 times on transient API errors (500, 529, etc.)
+    import time as _time
+    raw_text = None
+    for _attempt in range(3):
+        try:
+            raw_text = full_response(system, user_msg, max_tokens=1500, api_key=api_key,
+                                     provider=provider, lite=True, ollama_model=ollama_model)
+            break
+        except Exception as _e:
+            err_str = str(_e)
+            if any(code in err_str for code in ("500", "529", "503", "overloaded")):
+                if _attempt < 2:
+                    _time.sleep(2 ** _attempt)  # 1s, 2s backoff
+                    continue
+            raise
+
+    if raw_text is None:
+        yield "Re-scoring failed after retries. Please try again."
+        return
+
+    adjusted_text = _apply_score_adjustments(raw_text, resume_text)
+
+    # Yield as a single chunk so Streamlit's write_stream still works
+    yield adjusted_text
+
+
+VERIFY_SYSTEM_PROMPT = """You are a strict resume quality checker. Given a set of rewritten resume bullets and a user's fact base, check for violations. Output ONLY a JSON array of issues found, or an empty array [] if all bullets pass.
+
+Check each bullet for:
+1. CHARACTER LIMIT: Is the bullet over 250 characters? (count carefully)
+2. FABRICATION: Does the bullet claim metrics, tools, or experiences NOT in the fact base?
+3. BANNED PHRASES: Does it start with "Responsible for," "Assisted with," "Helped," "Participated in," or "Was involved in"?
+4. SENIORITY INFLATION: Does it claim to have "Directed," "Managed," "Oversaw," or "Supervised" a senior stakeholder?
+
+Output format (JSON only, no markdown):
+[{"bullet": "P:X", "issue": "description of issue", "severity": "error|warning"}]
+Or if no issues: []"""
+
+
+def verify_rewrites(rewrites_text: str, profile_section: str = "",
+                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                    ollama_model: str | None = None) -> str:
+    """Use lite model to spot-check rewrite outputs for guardrail violations.
+
+    This is a cheap verification pass that catches obvious errors from any model tier.
+    Returns the raw verification response (JSON array of issues or []).
+    """
+    system = VERIFY_SYSTEM_PROMPT
+    if profile_section:
+        system += f"\n\nUser Fact Base:\n{profile_section}"
+
+    user_msg = f"Rewritten bullets to verify:\n{rewrites_text}"
+
+    return full_response(system, user_msg, max_tokens=2000, api_key=api_key,
+                         provider=provider, lite=True, ollama_model=ollama_model)
+
+
+CORRECTION_SYSTEM_PROMPT = """You are a resume bullet fixer. You receive bullets that FAILED validation checks and must fix ONLY the specific violations listed. Do NOT change bullets that passed.
+
+## RULES
+- Output ONLY the fixed bullets in [P:X] format. Nothing else — no explanations, no diff reports.
+- PLAIN TEXT ONLY — no Markdown (**, *, __, `).
+- First-Person Implied — start every bullet with a past-tense action verb. No "I", "My".
+- Every bullet must end with a measurable business outcome ($, %, count).
+- Preserve the original meaning and fact base — do NOT fabricate.
+
+## CONSTRAINTS PER VIOLATION TYPE
+- OVER_LIMIT (>250 chars): Condense to <220 chars. Trimming priority: keep Result, tighten Action, cut Context. Use abbreviations (GTM, SaaS, BU, FP&A).
+- DUPLICATE_VERB: Change the starting verb to a unique synonym not used elsewhere on the resume.
+- BANNED_PHRASE: Replace the banned opening with an appropriate action verb.
+- MISSING_ACR: Restructure as Action → Context → Result with a quantifiable outcome.
+
+Output format (ONLY this, nothing else):
+[P:X] fixed bullet text here
+[P:Y] fixed bullet text here"""
+
+
+def correction_pass(failed_bullets: list[dict], full_resume_text: str,
+                    profile_section: str = "",
+                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
+                    ollama_model: str | None = None) -> str:
+    """Run a targeted correction pass on bullets that failed validation.
+
+    Uses the MAIN model (not lite) because corrections require the same quality
+    as the initial rewrite to avoid introducing new errors.
+
+    Args:
+        failed_bullets: list of dicts with keys 'index', 'text', 'violations' (list of error strings)
+        full_resume_text: the full resume text for verb-uniqueness context
+        profile_section: user profile for fact-base grounding
+    Returns:
+        Raw LLM response with [P:X] formatted corrections.
+    """
+    system = CORRECTION_SYSTEM_PROMPT
+    if profile_section:
+        system += f"\n\n{profile_section}"
+
+    # Build the user message with specific violations
+    lines = ["Fix ONLY the bullets listed below. Each bullet has specific violations that must be resolved.\n"]
+    lines.append("## FAILED BULLETS\n")
+    for fb in failed_bullets:
+        lines.append(f"[P:{fb['index']}] {fb['text']}")
+        lines.append(f"  VIOLATIONS: {'; '.join(fb['violations'])}")
+        lines.append("")
+
+    # Provide full resume context so the model can check verb uniqueness
+    lines.append("## FULL RESUME (for verb-uniqueness context — do NOT rewrite bullets not listed above):")
+    lines.append(full_resume_text)
+
+    user_msg = "\n".join(lines)
+
+    return full_response(system, user_msg, max_tokens=4000, api_key=api_key,
+                         provider=provider, ollama_model=ollama_model)
 
 
 def build_chat_system(job_title: str, job_description: str, resume_text: str,
@@ -626,3 +1090,202 @@ def build_chat_system(job_title: str, job_description: str, resume_text: str,
         system += f"\n\n## Reference Material:\n{reference_context}"
 
     return system
+
+
+# ---------------------------------------------------------------------------
+# Automated Validation Pipeline (Guardrail 7)
+# ---------------------------------------------------------------------------
+
+import re as _re
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass
+class ValidationResult:
+    """Result of the automated validation pipeline."""
+    passed: bool
+    issues: list[str]
+    warnings: list[str]
+    bullet_details: list[dict]
+
+    def summary(self) -> str:
+        lines = []
+        if self.passed:
+            lines.append("### Validation: PASSED")
+        else:
+            lines.append("### Validation: FAILED — issues must be fixed")
+        if self.issues:
+            lines.append("\n**Issues (must fix):**")
+            for i in self.issues:
+                lines.append(f"- {i}")
+        if self.warnings:
+            lines.append("\n**Warnings (review recommended):**")
+            for w in self.warnings:
+                lines.append(f"- {w}")
+        return "\n".join(lines)
+
+
+def validate_resume(resume_text: str, profile_section: str = "") -> "ValidationResult":
+    """Run the automated validation pipeline on a resume.
+
+    Checks that can be done programmatically (no LLM needed):
+    - Character limits per bullet
+    - Verb uniqueness
+    - Banned verbs/phrases
+    - Word repetition across bullets
+    - Blocklisted tools (if profile provided)
+    """
+    issues = []
+    warnings = []
+    bullet_details = []
+
+    # Parse resume text into paragraphs
+    lines = resume_text.strip().split("\n")
+    bullets = []
+    for line in lines:
+        m = _re.match(r'\[P:(\d+)\]\s*(.+)', line)
+        if m:
+            idx = int(m.group(1))
+            text = m.group(2).strip()
+            # Heuristic: bullets typically start with a verb or bullet char
+            is_bullet = (
+                text.startswith(("•", "-", "–", "▪"))
+                or (len(text) > 30 and text[0].isupper() and not text.isupper())
+            )
+            if is_bullet:
+                clean = _re.sub(r'^[•\-–▪■]\s*', '', text)
+                bullets.append({"index": idx, "text": clean, "original": text})
+
+    # 1. Character limit check
+    CHAR_TARGET = 220
+    CHAR_FLAG = 250
+    CHAR_HARD = 250
+    for b in bullets:
+        char_count = len(b["text"])
+        status = "OK"
+        if char_count > CHAR_HARD:
+            issues.append(f"[P:{b['index']}] OVER HARD LIMIT: {char_count} chars (max 250). Must rewrite.")
+            status = "OVER_LIMIT"
+        elif char_count > CHAR_TARGET:
+            warnings.append(f"[P:{b['index']}] Over target: {char_count} chars (target <220).")
+            status = "FLAGGED"
+        bullet_details.append({"index": b["index"], "chars": char_count, "char_status": status})
+
+    # 2. Verb uniqueness check
+    verbs = {}
+    for b in bullets:
+        clean = _re.sub(r'^[•\-–▪■]\s*', '', b["text"])
+        first_word = clean.split()[0].rstrip(",") if clean.split() else ""
+        first_word_lower = first_word.lower()
+        if first_word_lower in verbs:
+            issues.append(
+                f"Duplicate starting verb '{first_word}': [P:{verbs[first_word_lower]}] and [P:{b['index']}]"
+            )
+        else:
+            verbs[first_word_lower] = b["index"]
+
+    # 3. Banned verbs/phrases check
+    BANNED_STARTS = [
+        "responsible for", "assisted with", "helped", "participated in", "was involved in",
+    ]
+    BANNED_WORDS = ["spearheaded", "leveraged", "synergy", "passionate", "dynamic", "deep dive"]
+    for b in bullets:
+        text_lower = b["text"].lower()
+        for banned in BANNED_STARTS:
+            if text_lower.startswith(banned):
+                issues.append(f"[P:{b['index']}] Starts with banned phrase '{banned}'")
+        for banned in BANNED_WORDS:
+            if banned in text_lower:
+                warnings.append(f"[P:{b['index']}] Contains LLM-ism '{banned}'")
+
+    # 4. Word repetition check (non-trivial words appearing in >2 bullets)
+    STOP_WORDS = {
+        "the", "a", "an", "and", "or", "to", "in", "of", "for", "with", "by", "on",
+        "at", "from", "as", "is", "was", "are", "were", "be", "been", "being", "have",
+        "has", "had", "do", "does", "did", "will", "would", "could", "should", "may",
+        "might", "shall", "can", "that", "this", "these", "those", "it", "its", "not",
+        "but", "if", "then", "than", "so", "no", "nor", "both", "each", "all", "any",
+        "such", "into", "over", "per", "up", "out", "across", "through", "using",
+        "via", "about", "between", "more", "also", "new", "key",
+    }
+    word_to_bullets: dict[str, list[int]] = {}
+    for b in bullets:
+        words = set(_re.findall(r'[a-z]+', b["text"].lower()))
+        words -= STOP_WORDS
+        words = {w for w in words if len(w) > 3}  # skip short words
+        for w in words:
+            word_to_bullets.setdefault(w, []).append(b["index"])
+    for word, idxs in word_to_bullets.items():
+        if len(idxs) > 2:
+            warnings.append(
+                f"Word '{word}' appears in {len(idxs)} bullets: {['P:'+str(i) for i in idxs]}"
+            )
+
+    # 5. Blocklisted tools check (if profile provided)
+    if profile_section:
+        blocklist_match = _re.search(
+            r'Tools NOT Used.*?BLOCKLIST.*?\n((?:\s+-\s+.+\n)*)', profile_section
+        )
+        if blocklist_match:
+            blocklist_items = _re.findall(r'-\s+(.+)', blocklist_match.group(1))
+            full_text = " ".join(b["text"] for b in bullets).lower()
+            for tool in blocklist_items:
+                tool_clean = tool.strip().lower()
+                if tool_clean and tool_clean in full_text:
+                    issues.append(f"BLOCKLISTED tool '{tool.strip()}' found in resume text!")
+
+    # 6. ACR format check — each bullet should have a result/outcome signal
+    _RESULT_SIGNALS = _re.compile(
+        r'[\$%]|\d+%|\d+\+?\s*'
+        r'(users|customers|teams|regions|markets|points|products|units|clients|deals|'
+        r'territories|countries|events|members|children|business\s*units)'
+        r'|reduc|improv|increas|grew|generat|sav|deliver|driv|lift|boost|cut|streamlin|enabl',
+        _re.IGNORECASE,
+    )
+    bullets_missing_result = []
+    for b in bullets:
+        if not _RESULT_SIGNALS.search(b["text"]):
+            bullets_missing_result.append(b["index"])
+    if bullets_missing_result:
+        warnings.append(
+            f"Bullets missing clear ACR result/outcome: "
+            f"{['P:'+str(i) for i in bullets_missing_result]}. "
+            f"Each bullet should end with a measurable impact."
+        )
+
+    # 7. Skill diversity check — flag if bullets are too thematically similar
+    # Use lightweight keyword clusters to detect repeated skill themes
+    _SKILL_CLUSTERS = {
+        "data_analytics": {"data", "analytics", "analysis", "analyzed", "dashboards", "insights", "metrics", "sql", "tableau", "power"},
+        "leadership": {"led", "managed", "directed", "oversaw", "mentored", "coordinated", "organized"},
+        "financial": {"revenue", "profit", "forecast", "pricing", "budget", "cost", "financial", "p&l", "margin"},
+        "cross_functional": {"cross-functional", "stakeholder", "collaborated", "partnered", "teams", "alignment"},
+        "strategy": {"strategy", "strategic", "roadmap", "planning", "initiative", "priorit"},
+        "communication": {"presented", "communicated", "reporting", "storytelling", "stakeholder"},
+        "process_ops": {"process", "operational", "efficiency", "streamlined", "optimized", "automated", "workflow"},
+        "technical": {"built", "designed", "implemented", "developed", "architected", "engineered", "platform", "system", "infrastructure"},
+    }
+    bullet_themes: dict[int, list[str]] = {}
+    for b in bullets:
+        text_lower = b["text"].lower()
+        themes = []
+        for theme, keywords in _SKILL_CLUSTERS.items():
+            if any(kw in text_lower for kw in keywords):
+                themes.append(theme)
+        bullet_themes[b["index"]] = themes
+
+    # Check if any theme appears in >3 bullets (signals lack of diversity)
+    theme_counts: dict[str, list[int]] = {}
+    for b_idx, themes in bullet_themes.items():
+        for t in themes:
+            theme_counts.setdefault(t, []).append(b_idx)
+    for theme, idxs in theme_counts.items():
+        if len(idxs) > 3:
+            warnings.append(
+                f"Skill theme '{theme}' dominates {len(idxs)} bullets: "
+                f"{['P:'+str(i) for i in idxs]}. "
+                f"Consider diversifying to cover more JD-required abilities."
+            )
+
+    passed = len(issues) == 0
+    return ValidationResult(passed=passed, issues=issues, warnings=warnings, bullet_details=bullet_details)
