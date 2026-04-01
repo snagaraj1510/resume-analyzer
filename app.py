@@ -10,7 +10,7 @@ from document_handler import (
     rebuild_docx, parse_pdf, parse_pdf_resume, parse_txt_resume,
     build_docx_from_text, build_docx_from_template,
     chunk_reference_material, docx_to_pdf,
-    load_bundled_references, fetch_jd_from_url,
+    load_bundled_references, load_style_examples, fetch_jd_from_url,
 )
 from profile_manager import UserProfile
 from analyzer import (
@@ -279,9 +279,16 @@ with st.sidebar:
     # ── Reference materials (collapsed by default) ──
     with st.expander("Advanced: Reference Materials", expanded=False):
         REFERENCES_DIR = os.path.join(os.path.dirname(__file__), "references")
+        STYLE_EXAMPLES_DIR = os.path.join(REFERENCES_DIR, "style_examples")
         if "bundled_ref_text" not in st.session_state:
             bundled = load_bundled_references(REFERENCES_DIR)
             st.session_state["bundled_ref_text"] = bundled
+        if "style_examples_text" not in st.session_state:
+            style_ex = load_style_examples(STYLE_EXAMPLES_DIR)
+            st.session_state["style_examples_text"] = style_ex
+            if style_ex:
+                count = style_ex.count("###")
+                st.caption(f"Writing style: {count} tailored resume(s) loaded")
 
         ref_files = st.file_uploader(
             "Upload books/PDFs for best practices (optional)",
@@ -370,6 +377,7 @@ with main_col:
                 st.session_state["resume_text"],
                 profile_section=profile_section,
                 reference_context=st.session_state["reference_text"],
+                style_examples=st.session_state.get("style_examples_text", ""),
                 api_key=api_key, provider=provider, ollama_model=ollama_model,
             )
             analysis_chunks = []
@@ -386,6 +394,7 @@ with main_col:
                 st.session_state["analysis_result"],
                 profile_section=profile_section,
                 reference_context=st.session_state["reference_text"],
+                style_examples=st.session_state.get("style_examples_text", ""),
                 api_key=api_key, provider=provider, ollama_model=ollama_model,
             )
             st.session_state["rewrite_result"] = result
@@ -577,6 +586,7 @@ if st.session_state.get("_chat_pending_input"):
             st.session_state["analysis_result"] + "\n\n## USER DIRECTIVE:\n" + _pending_input,
             profile_section=profile_section,
             reference_context=st.session_state["reference_text"],
+            style_examples=st.session_state.get("style_examples_text", ""),
             api_key=api_key, provider=provider, ollama_model=ollama_model,
         )
         new_rewrites = parse_rewrite_response(result)

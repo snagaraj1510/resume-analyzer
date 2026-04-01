@@ -9,3 +9,5 @@ user_profiles/*.json
 data/
 references/*.pdf
 references/*.docx
+# Personal tailored resume examples — contains real career data
+references/style_examples/

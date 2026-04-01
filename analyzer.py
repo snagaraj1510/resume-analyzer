@@ -527,12 +527,15 @@ Ranked by impact. Reference specific [P:X] bullets and JD requirements. One sent
 
 def analyze_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "", reference_context: str = "",
+                   style_examples: str = "",
                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
                    ollama_model: str | None = None):
     """Stream unified ATS + ACR analysis with weighted scoring."""
     system = ANALYSIS_SYSTEM_PROMPT
     if profile_section:
         system += "\n\n" + profile_section
+    if style_examples:
+        system += "\n\n" + style_examples
 
     user_msg = f"Position: {job_title}\n\nJob Description:\n{job_description}\n\nResume Content:\n{resume_text}"
     if reference_context:
@@ -637,6 +640,7 @@ FORBIDDEN in output: NEVER output "Original:", "Reason:", "Checks:", diff report
 def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                    analysis_result: str,
                    profile_section: str = "", reference_context: str = "",
+                   style_examples: str = "",
                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
                    ollama_model: str | None = None) -> str:
     """Non-streaming resume rewrite with guardrail-enforced self-healing.
@@ -658,6 +662,8 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
     system = REWRITE_SYSTEM_PROMPT
     if profile_section:
         system += "\n\n" + profile_section
+    if style_examples:
+        system += "\n\n" + style_examples
 
     user_msg = (
         f"Target Position: {job_title}\n\n"

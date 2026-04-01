@@ -501,6 +501,106 @@ def load_bundled_references(references_dir: str) -> str:
     return "\n\n".join(ref_texts)
 
 
+def load_style_examples(
+    style_dir: str,
+    base_bullets_shown: int = 6,
+    role_bullets_shown: int = 3,
+) -> str:
+    """Load prior tailored resumes as a writing-style reference block.
+
+    Strategy:
+    - "Base Resume.docx" (if present) anchors the writing style: shows up to
+      `base_bullets_shown` bullets as the baseline voice/ACR structure.
+    - Each other .docx shows up to `role_bullets_shown` bullets that are unique
+      vs the base resume, so the LLM sees how the same experience is framed
+      for different roles (Strategy vs BizOps vs FP&A, etc.).
+
+    This is injected into the system prompt so the model matches writing voice,
+    verb strength, and bullet structure — it does NOT copy content.
+
+    Args:
+        style_dir: Path to directory of role-named .docx files.
+        base_bullets_shown: Max bullets shown from "Base Resume.docx".
+        role_bullets_shown: Max role-unique bullets shown per tailored resume.
+
+    Returns:
+        Formatted style reference string, or "" if directory is missing/empty.
+    """
+    if not os.path.isdir(style_dir):
+        return ""
+
+    def _extract_bullets(file_bytes: bytes) -> list[str]:
+        """Extract content bullets only — filter headers, contact, title/date rows."""
+        structure = parse_docx(file_bytes)
+        bullets = []
+        for para in structure.paragraphs:
+            text = para.full_text.strip()
+            if (
+                len(text) > 50
+                and text[0].isupper()
+                and not text.isupper()          # not ALL CAPS section header
+                and "\t" not in text            # not a title|date row (tab-aligned)
+                and "|" not in text             # not contact line
+                and "@" not in text             # not email
+                and len(text.split()) >= 8      # not a short label/header
+            ):
+                clean = re.sub(r'^[•\-–▪■]\s*', '', text)
+                bullets.append(clean)
+        return bullets
+
+    # Load base resume first (anchors style)
+    base_set: set[str] = set()
+    base_bullets: list[str] = []
+    base_path = os.path.join(style_dir, "Base Resume.docx")
+    if os.path.isfile(base_path):
+        try:
+            base_bullets = _extract_bullets(open(base_path, "rb").read())
+            base_set = set(base_bullets)
+        except Exception:
+            pass
+
+    # Load role-specific resumes — collect bullets unique vs base
+    role_data: dict[str, list[str]] = {}
+    for fname in sorted(os.listdir(style_dir)):
+        if not fname.lower().endswith(".docx") or fname == "Base Resume.docx":
+            continue
+        role_name = fname[:-5]
+        fpath = os.path.join(style_dir, fname)
+        try:
+            all_b = _extract_bullets(open(fpath, "rb").read())
+            unique = [b for b in all_b if b not in base_set]
+            if unique:
+                role_data[role_name] = unique
+        except Exception:
+            continue
+
+    if not base_bullets and not role_data:
+        return ""
+
+    lines = [
+        "## WRITING STYLE REFERENCE — Prior Tailored Resumes",
+        "These are past versions of this user's resume tailored for specific roles.",
+        "Match this writing voice, verb strength, ACR structure, and level of specificity.",
+        "Do NOT copy content — use these only to calibrate style.\n",
+    ]
+
+    # Base style bullets
+    if base_bullets:
+        lines.append("### Baseline Writing Style")
+        for b in base_bullets[:base_bullets_shown]:
+            lines.append(f"- {b}")
+        lines.append("")
+
+    # Role-specific framing variants
+    for role_name, unique_bullets in role_data.items():
+        lines.append(f"### {role_name} (role-specific framing)")
+        for b in unique_bullets[:role_bullets_shown]:
+            lines.append(f"- {b}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def chunk_reference_material(text: str, max_chars: int = 80000) -> list[str]:
     """Split large reference text into chunks at paragraph boundaries."""
     if len(text) <= max_chars:
