@@ -535,6 +535,9 @@ def chunk_reference_material(text: str, max_chars: int = 80000) -> list[str]:
 
 def fetch_jd_from_url(url: str) -> str | None:
     """Fetch job description text from a URL. Returns plain text or None on failure."""
+    # Restrict to http/https only to prevent SSRF via file://, ftp://, localhost, etc.
+    if not url or not url.lower().startswith(("https://", "http://")):
+        return None
     try:
         req = urllib.request.Request(
             url,

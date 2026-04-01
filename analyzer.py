@@ -639,15 +639,21 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                    profile_section: str = "", reference_context: str = "",
                    api_key: str | None = None, provider: str = "Claude (Anthropic)",
                    ollama_model: str | None = None) -> str:
-    """Non-streaming resume rewrite with self-healing validation loop.
+    """Non-streaming resume rewrite with guardrail-enforced self-healing.
 
-    After the initial LLM rewrite, immediately validates the new bullets.
-    If validation finds warnings or issues (char count > 250, repeated verbs,
-    missing ACR), automatically sends a correction prompt and re-validates.
-    Up to 2 correction passes before returning the best available result.
+    For Claude (Anthropic): uses an agentic tool-calling loop. The model writes bullets,
+    then calls the validate_bullets tool (backed by validate_resume()) to inspect its own
+    output. It fixes violations autonomously and re-validates until all guardrails pass
+    or max iterations is reached — no manual orchestration needed.
+
+    For all other providers (GPT-4o, Gemini, Ollama): uses the original manual
+    self-healing loop — rewrite → validate → correction pass, up to 2 passes.
+
+    All providers share the same metric injection pass after the main rewrite loop.
     """
     import re as _rr
     from document_handler import parse_rewrite_response as _parse_rr
+    import time as _time
 
     system = REWRITE_SYSTEM_PROMPT
     if profile_section:
@@ -661,119 +667,136 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
     )
     if reference_context:
         user_msg += f"\n\nResume Writing Best Practices:\n{reference_context}"
-
     user_msg += "\n\nRewrite the paragraphs that need improvement. Output ONLY changed paragraphs in [P:X] format."
 
-    # Retry up to 3 times on transient API errors
-    import time as _time
-    raw_response = None
-    for _attempt in range(3):
-        try:
-            raw_response = full_response(system, user_msg, max_tokens=12000, api_key=api_key, provider=provider, ollama_model=ollama_model)
-            break
-        except Exception as _e:
-            err_str = str(_e)
-            if any(code in err_str for code in ("500", "529", "503", "overloaded")):
-                if _attempt < 2:
-                    _time.sleep(2 ** _attempt)
-                    continue
-            raise
-    if raw_response is None:
-        return ""
+    current_response = ""
 
-    # ── Self-healing loop: validate → correct → re-validate (max 2 passes) ──
-    MAX_CORRECTION_PASSES = 2
-    current_response = raw_response
+    # ── Anthropic: agent-based self-directed validation loop ──────────────────
+    if provider == "Claude (Anthropic)":
+        for _attempt in range(3):
+            try:
+                current_response = _agent_rewrite_anthropic(
+                    system=system,
+                    user_msg=user_msg,
+                    resume_text=resume_text,
+                    profile_section=profile_section,
+                    api_key=api_key,
+                )
+                break
+            except Exception as _e:
+                err_str = str(_e)
+                if any(code in err_str for code in ("500", "529", "503", "overloaded")):
+                    if _attempt < 2:
+                        _time.sleep(2 ** _attempt)
+                        continue
+                raise
+        if not current_response:
+            return ""
 
-    for pass_num in range(MAX_CORRECTION_PASSES):
-        # Build a synthetic resume text with rewrites applied for validation
-        new_bullets = _parse_rr(current_response)
-        if not new_bullets:
-            break
+    # ── Other providers: manual self-healing loop (rewrite → validate → fix) ──
+    else:
+        raw_response = None
+        for _attempt in range(3):
+            try:
+                raw_response = full_response(
+                    system, user_msg, max_tokens=12000,
+                    api_key=api_key, provider=provider, ollama_model=ollama_model,
+                )
+                break
+            except Exception as _e:
+                err_str = str(_e)
+                if any(code in err_str for code in ("500", "529", "503", "overloaded")):
+                    if _attempt < 2:
+                        _time.sleep(2 ** _attempt)
+                        continue
+                raise
+        if raw_response is None:
+            return ""
 
-        # Merge rewrites into the original resume text for validation
-        merged_lines = []
-        for line in resume_text.strip().split("\n"):
-            m = _rr.match(r'\[P:(\d+)\]\s*(.*)', line)
-            if m:
-                idx = int(m.group(1))
-                if idx in new_bullets:
-                    merged_lines.append(f"[P:{idx}] {new_bullets[idx]}")
+        current_response = raw_response
+        MAX_CORRECTION_PASSES = 2
+
+        for pass_num in range(MAX_CORRECTION_PASSES):
+            new_bullets = _parse_rr(current_response)
+            if not new_bullets:
+                break
+
+            # Merge rewrites into the original resume text for validation
+            merged_lines = []
+            for line in resume_text.strip().split("\n"):
+                m = _rr.match(r'\[P:(\d+)\]\s*(.*)', line)
+                if m:
+                    idx = int(m.group(1))
+                    if idx in new_bullets:
+                        merged_lines.append(f"[P:{idx}] {new_bullets[idx]}")
+                    else:
+                        merged_lines.append(line)
                 else:
                     merged_lines.append(line)
-            else:
-                merged_lines.append(line)
-        merged_text = "\n".join(merged_lines)
+            merged_text = "\n".join(merged_lines)
 
-        validation = validate_resume(merged_text, profile_section)
+            validation = validate_resume(merged_text, profile_section)
+            all_failures = validation.issues + validation.warnings
+            if not all_failures:
+                break
 
-        # Collect all actionable failures (issues AND warnings)
-        all_failures = validation.issues + validation.warnings
-        if not all_failures:
-            break  # Clean — stop
+            # Build list of failed bullets with specific violations
+            failed_map: dict[int, list[str]] = {}
+            for msg in all_failures:
+                idxs = _rr.findall(r'\[P:(\d+)\]', msg)
+                for idx_str in idxs:
+                    failed_map.setdefault(int(idx_str), []).append(msg)
 
-        # Build list of failed bullets with their specific violations
-        failed_map: dict[int, list[str]] = {}
-        for msg in all_failures:
-            idxs = _rr.findall(r'\[P:(\d+)\]', msg)
-            for idx_str in idxs:
-                failed_map.setdefault(int(idx_str), []).append(msg)
+            failed_bullets_to_fix = []
+            for p_idx, violations in failed_map.items():
+                bullet_text = new_bullets.get(p_idx)
+                if bullet_text:
+                    failed_bullets_to_fix.append({
+                        "index": p_idx,
+                        "text": bullet_text,
+                        "violations": list(set(violations)),
+                    })
 
-        # Only keep bullets that we actually rewrote
-        failed_bullets_to_fix = []
-        for p_idx, violations in failed_map.items():
-            bullet_text = new_bullets.get(p_idx)
-            if bullet_text:
-                failed_bullets_to_fix.append({
-                    "index": p_idx,
-                    "text": bullet_text,
-                    "violations": list(set(violations)),
-                })
+            if not failed_bullets_to_fix:
+                break
 
-        if not failed_bullets_to_fix:
-            break  # No fixable bullets
+            violation_lines = []
+            for fb in failed_bullets_to_fix:
+                violation_lines.append(f"[P:{fb['index']}] {fb['text']}")
+                for v in fb["violations"]:
+                    violation_lines.append(f"  - {v}")
+            violations_block = "\n".join(violation_lines)
 
-        # Build the correction prompt with the exact format requested
-        violation_lines = []
-        for fb in failed_bullets_to_fix:
-            violation_lines.append(f"[P:{fb['index']}] {fb['text']}")
-            for v in fb["violations"]:
-                violation_lines.append(f"  - {v}")
-        violations_block = "\n".join(violation_lines)
-
-        correction_prompt = (
-            f"The following bullets failed validation:\n{violations_block}\n\n"
-            "Fix each bullet to satisfy ALL of these requirements:\n"
-            "1. UNDER 250 characters (hard ceiling, target <220).\n"
-            "2. Starts with a UNIQUE high-impact action verb — no duplicates within the same experience block or across the resume.\n"
-            "3. Follows ACR format: [Strong Verb] + [Context/Project] + [Quantifiable Result with $, %, or #].\n"
-            "4. NO markdown/asterisks — plain text only.\n"
-            "Output ONLY fixed [P:X] lines. No commentary."
-        )
-
-        try:
-            fix_response = full_response(
-                system, correction_prompt, max_tokens=4000,
-                api_key=api_key, provider=provider, ollama_model=ollama_model,
+            correction_prompt = (
+                f"The following bullets failed validation:\n{violations_block}\n\n"
+                "Fix each bullet to satisfy ALL of these requirements:\n"
+                "1. UNDER 250 characters (hard ceiling, target <220).\n"
+                "2. Starts with a UNIQUE high-impact action verb — no duplicates within the same experience block or across the resume.\n"
+                "3. Follows ACR format: [Strong Verb] + [Context/Project] + [Quantifiable Result with $, %, or #].\n"
+                "4. NO markdown/asterisks — plain text only.\n"
+                "Output ONLY fixed [P:X] lines. No commentary."
             )
-            fix_bullets = _parse_rr(fix_response)
-            if fix_bullets:
-                # Merge corrections into the current response's bullet map
-                new_bullets.update(fix_bullets)
-                # Rebuild the response string so downstream parsers work
-                response_lines = []
-                for idx in sorted(new_bullets.keys()):
-                    response_lines.append(f"[P:{idx}] {new_bullets[idx]}")
-                current_response = "\n".join(response_lines)
-            else:
-                break  # Correction returned nothing — stop
-        except Exception:
-            break  # LLM call failed — return best effort
 
-    # ── Metric Injection Pass: if estimated score < 80, retry with metric-focused prompt ──
+            try:
+                fix_response = full_response(
+                    system, correction_prompt, max_tokens=4000,
+                    api_key=api_key, provider=provider, ollama_model=ollama_model,
+                )
+                fix_bullets = _parse_rr(fix_response)
+                if fix_bullets:
+                    new_bullets.update(fix_bullets)
+                    response_lines = []
+                    for idx in sorted(new_bullets.keys()):
+                        response_lines.append(f"[P:{idx}] {new_bullets[idx]}")
+                    current_response = "\n".join(response_lines)
+                else:
+                    break
+            except Exception:
+                break
+
+    # ── Metric injection pass (all providers) ─────────────────────────────────
     final_bullets = _parse_rr(current_response)
     if final_bullets:
-        # Quick check: count bullets with quantifiable metrics
         metric_bullets = sum(
             1 for t in final_bullets.values()
             if _rr.search(r'[\$%]|\d+%|\d+\+?\s*(users|customers|teams|regions|markets)', t)
@@ -782,7 +805,6 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
         metric_ratio = metric_bullets / total_bullets if total_bullets > 0 else 1.0
 
         if metric_ratio < 0.7:
-            # Less than 70% of bullets have metrics — run metric injection pass
             metric_prompt = (
                 "METRIC INJECTION PASS — Maximizing Business Impact and Quantitative Results.\n\n"
                 "The following rewritten bullets lack quantifiable business outcomes. "
@@ -810,7 +832,7 @@ def rewrite_resume(job_title: str, job_description: str, resume_text: str,
                         response_lines.append(f"[P:{idx}] {final_bullets[idx]}")
                     current_response = "\n".join(response_lines)
             except Exception:
-                pass  # Best effort — return what we have
+                pass
 
     return current_response
 
@@ -1069,6 +1091,135 @@ def correction_pass(failed_bullets: list[dict], full_resume_text: str,
 
     return full_response(system, user_msg, max_tokens=4000, api_key=api_key,
                          provider=provider, ollama_model=ollama_model)
+
+
+# ---------------------------------------------------------------------------
+# Agent-based Rewrite — Anthropic tool-calling
+# ---------------------------------------------------------------------------
+
+# Tool definition exposed to the Claude agent for self-directed validation.
+# The implementation is backed by validate_resume() — all G1-G8 rules enforced.
+_VALIDATE_TOOL_DEF = {
+    "name": "validate_bullets",
+    "description": (
+        "Run the automated guardrail validation pipeline on resume bullets. "
+        "Call this after writing or revising bullets to check for violations. "
+        "Returns 'passed' (bool), 'issues' (must-fix list), and 'warnings' (review-recommended list). "
+        "Fix ALL issues before outputting your final bullets."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "resume_text": {
+                "type": "string",
+                "description": (
+                    "Full resume text with [P:X] paragraph markers, "
+                    "with your rewritten bullets merged in place of the originals."
+                ),
+            }
+        },
+        "required": ["resume_text"],
+    },
+}
+
+_AGENT_WORKFLOW_ADDENDUM = """
+
+## AGENT VALIDATION WORKFLOW
+You have access to a validate_bullets tool. Use it as follows after your initial rewrite:
+1. Merge your [P:X] rewrites into the original resume text (replace matching [P:X] lines with your versions).
+2. Call validate_bullets with the full merged resume text.
+3. If the result contains 'issues' (must-fix violations): fix EVERY issue, then call validate_bullets again.
+4. If the result contains only 'warnings': fix warnings that meaningfully improve bullet quality.
+5. When validate_bullets returns passed=true (or no issues remain): output your final [P:X] lines and stop.
+6. Maximum 3 validation rounds — after round 3, output your best available version regardless.
+
+CRITICAL: Your final output must contain ONLY [P:X] lines — no commentary, no explanations."""
+
+
+def _agent_rewrite_anthropic(
+    system: str,
+    user_msg: str,
+    resume_text: str,
+    profile_section: str,
+    api_key: str | None,
+    max_iterations: int = 4,
+) -> str:
+    """Claude-native agentic rewrite using tool_use for self-directed guardrail validation.
+
+    The agent writes bullets, calls validate_bullets to check its own output,
+    fixes violations, and iterates until all guardrails pass or max_iterations is reached.
+    The validate_bullets tool is backed by validate_resume() — all G1-G8 rules remain
+    fully enforced without any changes to the validation logic.
+
+    Args:
+        system: Full system prompt (REWRITE_SYSTEM_PROMPT + profile section)
+        user_msg: User message with JD, resume text, and prior analysis
+        resume_text: Original resume text (for agent to merge rewrites into)
+        profile_section: User profile for blocklist/fact-base checking
+        api_key: Anthropic API key
+        max_iterations: Max tool-call rounds before returning best-effort output
+
+    Returns:
+        Raw response string containing [P:X] formatted bullet rewrites.
+    """
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+    full_system = system + _AGENT_WORKFLOW_ADDENDUM
+    messages = [{"role": "user", "content": user_msg}]
+    last_text_output = ""
+
+    for _iteration in range(max_iterations):
+        response = client.messages.create(
+            model=PROVIDERS["Claude (Anthropic)"]["model"],
+            max_tokens=12000,
+            system=full_system,
+            tools=[_VALIDATE_TOOL_DEF],
+            messages=messages,
+        )
+
+        # Collect text output ([P:X] lines) and any tool_use calls
+        text_parts = []
+        tool_calls = []
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                tool_calls.append(block)
+
+        text_output = "\n".join(text_parts).strip()
+        if text_output:
+            last_text_output = text_output
+
+        # Append assistant turn to conversation history
+        messages.append({"role": "assistant", "content": response.content})
+
+        # No tool calls — agent is satisfied with its output
+        if response.stop_reason == "end_turn" or not tool_calls:
+            break
+
+        # Execute validate_bullets calls and return structured results to the agent
+        tool_results = []
+        for tc in tool_calls:
+            if tc.name == "validate_bullets":
+                merged_text = tc.input.get("resume_text", resume_text)
+                result = validate_resume(merged_text, profile_section)
+                tool_result_content = _json.dumps({
+                    "passed": result.passed,
+                    "issues": result.issues,
+                    "warnings": result.warnings,
+                    "summary": result.summary(),
+                })
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc.id,
+                    "content": tool_result_content,
+                })
+
+        if tool_results:
+            messages.append({"role": "user", "content": tool_results})
+
+    return last_text_output
 
 
 def build_chat_system(job_title: str, job_description: str, resume_text: str,
