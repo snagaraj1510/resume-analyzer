@@ -1,5 +1,9 @@
 # Resume Analyzer
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://snagaraj1510-resume-analyzer-app-xrsimr.streamlit.app/)
+
+**Live app:** https://snagaraj1510-resume-analyzer-app-xrsimr.streamlit.app/
+
 A Streamlit web app that analyzes, scores, and rewrites resumes against job descriptions using AI. Supports multiple LLM providers and enforces strict guardrails to keep rewrites honest and interview-ready.
 
 ## Features
